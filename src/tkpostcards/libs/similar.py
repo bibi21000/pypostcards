@@ -37,7 +37,7 @@ class PostcardSearcher:
         self.model = self.model.to(self.device)
         self.model.eval()
 
-        self.index = []
+        self.index = {}
         self.tqdm = tqdm
 
     # --------------------------------------------------
@@ -482,3 +482,88 @@ class PostcardSearcher:
         )
 
         return matches
+
+    def extract_card_id(self, filepath: str) -> str:
+        """
+        Extrait l'id depuis :
+        /.../396_R.tiff -> "396"
+        """
+        return Path(filepath).stem.split("_")[0]
+
+    def verify_doubles(self, results, model):
+        """
+        Vérifie que :
+          - id(file1) est dans doubles de file2
+          - id(file2) est dans doubles de file1
+
+        Retourne une liste enrichie avec le résultat de la vérification.
+        """
+
+        checked = []
+
+        for item in results:
+            id1 = self.extract_card_id(item["file1"])
+            id2 = self.extract_card_id(item["file2"])
+
+            card1 = model.get_card(id1)
+            card2 = model.get_card(id2)
+
+            doubles1 = set(str(x) for x in (card1.get("doubles", []) if card1 else []))
+            doubles2 = set(str(x) for x in (card2.get("doubles", []) if card2 else []))
+
+            id1_in_card2 = id1 in doubles2
+            id2_in_card1 = id2 in doubles1
+
+            checked.append({
+                **item,
+                "id1": id1,
+                "id2": id2,
+                "id1_in_file2_doubles": id1_in_card2,
+                "id2_in_file1_doubles": id2_in_card1,
+                "is_mutual_double": id1_in_card2 and id2_in_card1,
+            })
+
+        return checked
+
+
+    def find_missing_doubles(
+        self,
+        model,
+        results=None,
+        threshold=90,
+        hash_weight=0.60,
+        clip_weight=0.40
+    ):
+
+        errors = []
+
+        if results is None:
+            results = self.find_similar_in_index(
+                threshold=threshold,
+                hash_weight=hash_weight,
+                clip_weight=clip_weight
+            )
+
+        for item in results:
+            id1 = self.extract_card_id(item["file1"])
+            id2 = self.extract_card_id(item["file2"])
+
+            card1 = model.get_card(id1)
+            card2 = model.get_card(id2)
+
+            doubles1 = set(str(x) for x in (card1.get("doubles", []) if card1 else []))
+            doubles2 = set(str(x) for x in (card2.get("doubles", []) if card2 else []))
+
+            if id1 not in doubles2 or id2 not in doubles1:
+                errors.append({
+                    "score": item["score"],
+                    "file1": item["file1"],
+                    "file2": item["file2"],
+                    "id1": id1,
+                    "id2": id2,
+                    "file1_has_id2": id2 in doubles1,
+                    "file2_has_id1": id1 in doubles2,
+                })
+
+        return errors
+

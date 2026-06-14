@@ -19,9 +19,16 @@ class PostcardBackup:
             with cctx.stream_writer(archive_file) as compressor:
                 with tarfile.open(fileobj=compressor, mode="w|") as tar:
                     tar.add(
-                        source_dir,
-                        arcname=os.path.basename(source_dir)
+                        os.path.join(source_dir, 'cards'),
+                        arcname='cards'
                     )
+                    for f in ['travels.json']:
+                        fname = os.path.join(source_dir, f)
+                        if os.path.isfile(fname):
+                            tar.add(
+                                fname,
+                                arcname=f
+                            )
 
 
     @staticmethod

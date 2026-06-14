@@ -29,6 +29,8 @@ class Common(object):
             tmpdir = config().get('DEFAULT', 'tmpdir', fallback=None)
         self.tmpdir = os.path.abspath(tmpdir or 'tmp')
 
+        self.file_format = config().get('DEFAULT', 'file_format', fallback='tiff')
+
         self.debug = debug
 
 @click.group()

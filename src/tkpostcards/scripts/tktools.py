@@ -44,6 +44,52 @@ def sync(common):
     with Model(common.datadir) as data:
         data.sync()
 
+@db.command()
+@click.argument('pcid', default=None)
+@click.pass_obj
+def delete(common, pcid):
+    _("""Delete card in database and its linked json and images""")
+    from pathlib import Path
+    from libpostcards.model import Model
+    try:
+        from ..libs.similar import PostcardSearcher
+        SEARCHER_AVAILABLE = True
+    except ImportError:
+        SEARCHER_AVAILABLE = False
+
+    if pcid is None:
+        raise RuntimeError(_("Give me id(s) to add"))
+
+    click.confirm(_('Do you want to delete card with id {pcid} ?').format(pcid=pcid), abort=True)
+
+    with Model(common.datadir) as data:
+        data.delete_card(pcid)
+
+    datadir = Path(common.datadir)
+
+    for rv in ['R', 'V']:
+        fname = datadir / 'cards' / ('%s_%s.%s' % (pcid, rv, common.file_format))
+        if fname.is_file() is True:
+            fname.unlink()
+
+    for d in ['size_div1', 'size_div3', 'size_div10', 'size_div20']:
+        for rv in ['R', 'V']:
+            fname = datadir / d / ('%s_%s.png' % (pcid, rv))
+            if fname.is_file() is True:
+                fname.unlink()
+
+    if SEARCHER_AVAILABLE:
+
+        index_file = Path(common.datadir) / "postcards.pkl"
+        searcher = PostcardSearcher()
+        searcher.load_index(
+            index_file
+        )
+        del searcher.index[str(datadir / 'size_div1' / ('%s_R.png' % (pcid)))]
+        searcher.save_index(
+            index_file
+        )
+
 @cli.group()
 def scan():
     pass
@@ -113,7 +159,6 @@ def add(common, pcid):
     _("""Add postcards""")
     import shutil
     from pathlib import Path
-    import pytesseract
     from libpostcards.model import Model
     from ..libs.ocr import PostcardOCR
     from ..libs.size import PostcardSize
@@ -138,12 +183,13 @@ def add(common, pcid):
         searcher.load_index(
             index_file
         )
+        output_original = Path(common.datadir) / "size_div1"
 
     ids = split_ids(pcid)
     pbar = tqdm(total=len(ids), desc=_("Postcards"))
     ext = 'tiff'
     for pci in ids:
-        print(f'Work on {pci}')
+        click.echo(f'Work on {pci}')
         updated = False
         outfileR = os.path.join(common.datadir, "cards", '%s_R.%s'%(pci, ext))
         if os.path.exists(outfileR):
@@ -156,18 +202,19 @@ def add(common, pcid):
         card = mod.load_json(pci)
         if card['recto_ocr'] is None or force is True:
             updated = True
-            card['recto_ocr'] = ocr.to_string(os.path.join(common.datadir, "cards", '%s_R.%s' % (pci, 'tiff')))
+            card['recto_ocr'] = ocr.to_string(os.path.join(common.datadir, "cards", '%s_R.%s' % (pci, common.file_format)))
         if card['verso_ocr'] is None or force is True:
             updated = True
-            card['verso_ocr'] = ocr.to_string(os.path.join(common.datadir, "cards", '%s_V.%s' % (pci, 'tiff')))
+            card['verso_ocr'] = ocr.to_string(os.path.join(common.datadir, "cards", '%s_V.%s' % (pci, common.file_format)))
         if updated is True:
             mod.write_json(card)
         pcs.export_one(Path(outfileR))
         pcs.export_one(Path(outfileF))
 
         if SEARCHER_AVAILABLE is True:
+            base_name = Path(outfileR).stem
             searcher.build_index(
-                outfileR
+                output_original / ('%s.png' % base_name)
             )
         pbar.update(1)
 
@@ -194,7 +241,7 @@ def create(common, level, archive):
         import datetime
         archive = "archive_" + datetime.datetime.now().strftime("%Y_%m_%d_%H_%M_%S") + '.tar.zst'
 
-    PostcardBackup.create_backup(os.path.join(common.datadir,'cards'),
+    PostcardBackup.create_backup(common.datadir,
         archive,
         compression_level=level)
 
@@ -227,7 +274,7 @@ def index(common):
         PostcardSearcher
     )
 
-    datadir = Path(common.datadir) / "cards"
+    datadir = Path(common.datadir) / "size_div1"
 
     index_file = Path(common.datadir) / "postcards.pkl"
 
@@ -365,3 +412,115 @@ def clipboard(common, threshold, max_results):
             f"{item['score']:6.1f}%  "
             f"{item['path']}"
         )
+
+@cli.command()
+@click.option("--threshold", default=90, type=float)
+@click.option("--max-results", default=100, type=int)
+@click.pass_obj
+def duplicates(common, threshold, max_results):
+    """Check for missing ids and replace cards wih last ones"""
+    from pathlib import Path
+    from libpostcards.model import Model
+    from ..libs.similar import (
+        PostcardSearcher
+    )
+
+    index_file = Path(common.datadir) / "postcards.pkl"
+    searcher = PostcardSearcher(tqdm=tqdm)
+
+    searcher.load_index(
+        index_file
+    )
+
+    matches = searcher.find_similar_in_index(
+        threshold=threshold,
+    )
+
+    click.echo()
+    click.echo(
+        f"{len(matches)} doublons potentiels trouvés"
+    )
+    click.echo(
+        "Raw duplicate"
+    )
+    for m in matches:
+
+        click.echo(
+            f"{m['score']:6.1f}%"
+        )
+
+        click.echo(
+            f"  {m['file1']}"
+        )
+
+        click.echo(
+            f"  {m['file2']}"
+        )
+
+        click.echo()
+
+    click.echo()
+    click.echo(
+        "Missing doubles"
+    )
+
+    with Model(common.datadir) as model:
+
+        matches2 = searcher.find_missing_doubles(model, threshold=threshold)
+
+    print(matches2)
+
+@cli.command()
+@click.argument('pcid', default=None, nargs=-1)
+@click.pass_obj
+def ocr(common, pcid):
+    """Redo OCR for postcards"""
+    from libpostcards.model import Model
+    from ..libs.ocr import PostcardOCR
+    if pcid is None:
+        raise RuntimeError("Give me a name")
+
+    ocr = PostcardOCR()
+    ids = split_ids(pcid)
+
+    pbar = tqdm(total=len(ids), desc="Postcards")
+    with Model(common.datadir) as model:
+        for pci in ids:
+            card = model.load_json(pci)
+            card['recto_ocr'] = ocr.to_string(os.path.join(common.datadir, "cards", '%s_R.%s'%(pci, common.file_format)))
+            card['verso_ocr'] = ocr.to_string(os.path.join(common.datadir, "cards", '%s_V.%s'%(pci, common.file_format)))
+            model.write_json(card)
+            pbar.update(1)
+    pbar.close()
+
+
+@cli.command()
+@click.pass_obj
+def travels(common):
+    """Calculate travels and add thm to database"""
+    from pathlib import Path
+    import json
+    from libpostcards.model import Model
+    from ..libs.travel import (
+        ParcoursCartes
+    )
+    datadir = Path(common.datadir)
+    model = Model(common.datadir)
+    data = model.list_cards()
+    with open(datadir / "travels.json", "r", encoding="utf-8") as f:
+        travels = json.load(f)
+
+    travel = ParcoursCartes(data)
+    travel_data = {}
+    for tt in travels:
+        travel_data = travel.calculer(
+            *travels[tt]['start'],
+            collection=travels[tt]['collection'],
+            )
+        travel_data['id'] = travels[tt]['id']
+        travel_data['title'] = travels[tt]['title']
+        travel_data['title2'] = travels[tt]['title2']
+        model.write_travel(travel_data)
+
+
+

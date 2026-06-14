@@ -34,6 +34,9 @@ TRANSLATIONS_DIR = APP_DIR / "translations"
 CONFIG_FILE = APP_DIR / "postcards.conf"
 
 
+I18N_DOMAIN = "tkpostcards"
+
+
 def setup_i18n(lang: str | None = None) -> gettext.NullTranslations:
     """Return a translation object for the requested language."""
     if lang is None:
@@ -41,7 +44,7 @@ def setup_i18n(lang: str | None = None) -> gettext.NullTranslations:
         lang = (lc or "en")[:2]
     try:
         translation = gettext.translation(
-            "messages",
+            I18N_DOMAIN,
             localedir=str(TRANSLATIONS_DIR),
             languages=[lang],
         )

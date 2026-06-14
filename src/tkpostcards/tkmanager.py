@@ -37,7 +37,7 @@ except ImportError:
 # ─────────────────────────────────────────────────────────────────────────────
 #  i18n
 # ─────────────────────────────────────────────────────────────────────────────
-LOCALE_DIR = Path(__file__).parent / "locales"
+LOCALE_DIR = Path(__file__).parent / "translations"
 
 # Placeholder so static analyzers (ruff) recognize `_` as defined.
 # Overwritten with the real translation function by setup_i18n().
@@ -53,12 +53,41 @@ def setup_i18n():
     except Exception:
         lang = "en"
     try:
-        t = gettext.translation("tkmanager", localedir=str(LOCALE_DIR), languages=[lang])
+        t = gettext.translation("tkpostcards", localedir=str(LOCALE_DIR), languages=[lang])
     except FileNotFoundError:
         t = gettext.NullTranslations()
     t.install()
     _ = t.gettext
     return _
+
+
+def _translatable_field_labels():  # pragma: no cover
+    """Never called at runtime.
+
+    Field labels are looked up dynamically (e.g. ``_(lk)`` where ``lk`` is a
+    variable from ``App.TEXT_FIELDS`` / ``App.LIST_FIELDS`` or similar
+    tables), so ``pybabel extract -k _`` cannot see them as literal calls.
+    This function exists purely so the extractor picks up these strings.
+    """
+    return [
+        # App.TEXT_FIELDS
+        _("field_title"),
+        _("field_title2"),
+        _("field_description"),
+        _("field_recto_ocr"),
+        _("field_verso_ocr"),
+        _("field_recto_text"),
+        _("field_verso_text"),
+        # App.LIST_FIELDS
+        _("field_address"),
+        _("field_poi"),
+        # CoordDialog
+        _("coord_lat"),
+        _("coord_lon"),
+        # App._build_thumbs
+        _("side_recto"),
+        _("side_verso"),
+    ]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1291,6 +1320,7 @@ class App(tk.Tk):
         self._gallery: GalleryView | None = None
         self._search_win: SearchView | None = None
         self._text_search_win: "TextSearchView | None" = None
+        self._doubles_win: "DoublesSearchView | None" = None
         self._nav_collection: str | None = self._load_last_filter()
 
         self._scan_ids()
@@ -1459,23 +1489,11 @@ class App(tk.Tk):
                   bg=BG_FIELD, fg=FG_TEXT, font=FONT_LABEL,
                   relief=tk.FLAT, padx=6).pack(side=tk.LEFT)
 
-        self._btn_gallery = tk.Button(nav, text=_("nav_gallery"),
-                                      command=self._open_gallery,
-                                      bg=BG_FIELD, fg=FG_LINK, font=FONT_NAV,
-                                      relief=tk.FLAT, padx=14, pady=4, cursor="hand2")
-        self._btn_gallery.pack(side=tk.RIGHT, padx=6)
-
-        self._btn_similar = tk.Button(nav, text=_("nav_similar"),
-                                      command=self._open_search,
-                                      bg=BG_FIELD, fg=FG_ACCENT2, font=FONT_NAV,
-                                      relief=tk.FLAT, padx=14, pady=4, cursor="hand2")
-        self._btn_similar.pack(side=tk.RIGHT, padx=2)
-
-        self._btn_textsearch = tk.Button(nav, text=_("nav_textsearch"),
-                                         command=self._open_text_search,
-                                         bg=BG_FIELD, fg="#a0e0a0", font=FONT_NAV,
-                                         relief=tk.FLAT, padx=14, pady=4, cursor="hand2")
-        self._btn_textsearch.pack(side=tk.RIGHT, padx=2)
+        self._btn_more = tk.Button(nav, text=_("nav_more"),
+                                   command=self._open_more_menu,
+                                   bg=BG_FIELD, fg=FG_TEXT, font=FONT_NAV,
+                                   relief=tk.FLAT, padx=14, pady=4, cursor="hand2")
+        self._btn_more.pack(side=tk.RIGHT, padx=6)
 
         self._btn_next = tk.Button(nav, text=_("nav_next"), command=self._go_next,
                                    bg=BG_FIELD, fg=FG_TEXT, font=FONT_NAV,
@@ -1662,7 +1680,7 @@ class App(tk.Tk):
         for key, _lk in self.LIST_FIELDS:
             vals = self._data.get(key) or []
             self._list_labels[key].config(
-                text=" / ".join(vals) if vals else _("coord_none"))
+                text=" / ".join(vals) if vals else "")
 
         self._coord = self._data.get("coord") or []
         self._refresh_coord()
@@ -1670,12 +1688,12 @@ class App(tk.Tk):
         # Collections
         cols_val = self._data.get("collections") or []
         self._lbl_collections.config(
-            text=", ".join(cols_val) if cols_val else _("coord_none"))
+            text=", ".join(cols_val) if cols_val else "")
 
         # Doubles
         dbl_val = self._data.get("doubles") or []
         self._lbl_doubles.config(
-            text=", ".join(str(v) for v in dbl_val) if dbl_val else _("coord_none"))
+            text=", ".join(str(v) for v in dbl_val) if dbl_val else "")
 
         self._load_thumbs(cid)
 
@@ -1726,7 +1744,7 @@ class App(tk.Tk):
                 text=f"lat {self._coord[0]:.6f}  /  lon {self._coord[1]:.6f}")
             self._btn_osm.config(state=tk.NORMAL)
         else:
-            self._lbl_coord.config(text=_("coord_none"))
+            self._lbl_coord.config(text="")
             self._btn_osm.config(state=tk.DISABLED)
 
     # ── Navigation ────────────────────────────────────────────────────────────
@@ -1788,6 +1806,29 @@ class App(tk.Tk):
             self.model.close()
             self.destroy()
 
+    # ── "More" dropdown menu ──────────────────────────────────────────────────
+    def _open_more_menu(self):
+        m = tk.Menu(self, tearoff=0, bg=BG_FIELD, fg=FG_TEXT,
+                    activebackground=FG_ACCENT, activeforeground="#fff")
+        m.add_command(label=_("nav_textsearch"), command=self._open_text_search)
+        m.add_command(label=_("nav_similar"), command=self._open_search)
+        m.add_command(label=_("nav_doubles"), command=self._open_doubles_search)
+        m.add_command(label=_("nav_gallery"), command=self._open_gallery)
+
+        # Close the menu as soon as it loses focus (click outside,
+        # Escape, etc.) instead of relying on tk_popup's own grab.
+        m.bind("<FocusOut>", lambda _e: m.unpost())
+
+        x = self._btn_more.winfo_rootx()
+        y = self._btn_more.winfo_rooty() + self._btn_more.winfo_height()
+        try:
+            m.tk_popup(x, y)
+        finally:
+            # Let tk_popup's own grab manage closing the menu; releasing
+            # the grab here immediately would prevent outside clicks from
+            # dismissing it properly.
+            pass
+
     # ── Gallery ───────────────────────────────────────────────────────────────
     def _open_gallery(self):
         if self._gallery and self._gallery.winfo_exists():
@@ -1811,6 +1852,14 @@ class App(tk.Tk):
             self._text_search_win.focus_force()
             return
         self._text_search_win = TextSearchView(self, self._t)
+
+    # ── Missing doubles search ───────────────────────────────────────────────
+    def _open_doubles_search(self):
+        if self._doubles_win and self._doubles_win.winfo_exists():
+            self._doubles_win.lift()
+            self._doubles_win.focus_force()
+            return
+        self._doubles_win = DoublesSearchView(self, self._t)
 
     # ── Viewer ────────────────────────────────────────────────────────────────
     def _open_viewer(self, side: str):
@@ -1843,7 +1892,7 @@ class App(tk.Tk):
         def on_save(new_vals):
             self._data["collections"] = new_vals
             self._lbl_collections.config(
-                text=", ".join(new_vals) if new_vals else _("coord_none"))
+                text=", ".join(new_vals) if new_vals else "")
             self._mark_dirty()
         CollectionEditor(self, current, self.collections, on_save, self._t)
 
@@ -1854,7 +1903,7 @@ class App(tk.Tk):
             self._data["doubles"] = new_vals
             self._lbl_doubles.config(
                 text=", ".join(str(v) for v in new_vals) if new_vals
-                else _("coord_none"))
+                else "")
             self._mark_dirty()
         DoublesEditor(self, current, on_save, self._t)
 
@@ -1864,7 +1913,7 @@ class App(tk.Tk):
         def on_save(new_lines):
             self._data[key] = new_lines
             self._list_labels[key].config(
-                text=" / ".join(new_lines) if new_lines else _("coord_none"))
+                text=" / ".join(new_lines) if new_lines else "")
             self._mark_dirty()
         ListEditor(self, _(label_key), lines, on_save, self._t)
 
@@ -1972,11 +2021,15 @@ class SearchView(tk.Toplevel):
         threading.Thread(target=worker, daemon=True).start()
 
     def _on_index_loaded(self, searcher: "PostcardSearcher"):
+        if not self.winfo_exists():
+            return
         self._searcher = searcher
         self._status.set(_("search_index_ready"))
         self._btn_search.config(state=tk.NORMAL)
 
     def _on_index_error(self, err: Exception):
+        if not self.winfo_exists():
+            return
         self._status.set(_("search_index_error").format(err=err))
         # Button stays disabled if the index could not be loaded
 
@@ -2091,13 +2144,17 @@ class SearchView(tk.Toplevel):
                 )
             except Exception as e:
                 results = []
-                self.after(0, lambda err=e: messagebox.showerror(
-                    _("error_title"), str(err), parent=self))
-            self.after(0, lambda r=results: self._on_results(r))
+                if self.winfo_exists():
+                    self.after(0, lambda err=e: messagebox.showerror(
+                        _("error_title"), str(err), parent=self))
+            if self.winfo_exists():
+                self.after(0, lambda r=results: self._on_results(r))
 
         threading.Thread(target=worker, daemon=True).start()
 
     def _on_results(self, results: list[dict]):
+        if not self.winfo_exists():
+            return
         self._results = results
         n = len(results)
         self._status.set(_("search_done").format(n=n))
@@ -2286,6 +2343,390 @@ class SearchView(tk.Toplevel):
         if pct >= 60:
             return "#5a4010"
         return "#5a1020"
+
+    def _wheel(self, e):
+        if e.num == 4 or e.delta > 0:
+            self._cv.yview_scroll(-3, "units")
+        else:
+            self._cv.yview_scroll(3,  "units")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Missing doubles search (PostcardSearcher.find_missing_doubles)
+# ─────────────────────────────────────────────────────────────────────────────
+class DoublesSearchView(tk.Toplevel):
+    """Display potential duplicate postcards found by
+    PostcardSearcher.find_missing_doubles().
+
+    Each result is shown as a tile with the two thumbnails (file1 / file2)
+    side by side and the similarity score as a badge. Clicking a thumbnail
+    opens it in an ImageViewer.
+    """
+
+    # Tile / thumbnail dimensions
+    RES_W   = 160
+    RES_H   = 115
+    RES_PAD = 8
+    HDR_H   = 18
+    BADGE_H = 20
+    EDIT_H  = 22
+
+    def __init__(self, parent: "App", t):
+        super().__init__(parent)
+        self._app = parent
+        self._t   = t
+        self._tkimg: dict[tuple, "ImageTk.PhotoImage"] = {}
+        self._hits: list[tuple] = []
+        self._edit_hits: list[tuple] = []
+        self._results: list[dict] = []
+        self._searcher: "PostcardSearcher | None" = None
+        self._last_cv_w = 0
+        self._pending_draw: str | None = None
+
+        self.title(_("doubles_title"))
+        self.configure(bg=BG_MAIN)
+        self.geometry("1100x750")
+        self.minsize(700, 500)
+
+        self._build_form()
+        self._build_results()
+        self._build_statusbar()
+        self._cv.bind("<Configure>", self._on_cv_configure)
+
+        # Load the index in the background to avoid blocking the UI
+        self._load_index_async()
+
+    # ── Index loading ─────────────────────────────────────────────────────────
+    def _load_index_async(self):
+        """Load postcards.pkl in a thread to avoid blocking the UI."""
+        if not SEARCHER_AVAILABLE:
+            self._status.set(_("search_unavailable"))
+            self._btn_run.config(state=tk.DISABLED)
+            return
+        index_path = self._app.datadir / "postcards.pkl"
+        self._status.set(_("search_index_loading"))
+        self._btn_run.config(state=tk.DISABLED)
+
+        def worker():
+            try:
+                searcher = PostcardSearcher()
+                searcher.load_index(str(index_path))
+                self.after(0, lambda s=searcher: self._on_index_loaded(s))
+            except Exception as e:
+                self.after(0, lambda err=e: self._on_index_error(err))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_index_loaded(self, searcher: "PostcardSearcher"):
+        if not self.winfo_exists():
+            return
+        self._searcher = searcher
+        self._status.set(_("search_index_ready"))
+        self._btn_run.config(state=tk.NORMAL)
+
+    def _on_index_error(self, err: Exception):
+        if not self.winfo_exists():
+            return
+        self._status.set(_("search_index_error").format(err=err))
+        # Button stays disabled if the index could not be loaded
+
+    # ── Form ──────────────────────────────────────────────────────────────────
+    def _build_form(self):
+        form = tk.Frame(self, bg=BG_CARD, pady=10)
+        form.pack(fill=tk.X, padx=0)
+
+        row = tk.Frame(form, bg=BG_CARD)
+        row.pack(fill=tk.X, padx=14, pady=(0, 4))
+
+        tk.Label(row, text=_("doubles_threshold_label"), bg=BG_CARD, fg=FG_LABEL,
+                 font=FONT_LABEL, anchor=tk.W).pack(side=tk.LEFT)
+        self._thr_var = tk.StringVar(value="90")
+        thr_entry = tk.Entry(row, textvariable=self._thr_var, width=6,
+                             bg=BG_INPUT, fg=FG_TEXT, insertbackground=FG_TEXT,
+                             font=FONT_INPUT, relief=tk.FLAT)
+        thr_entry.pack(side=tk.LEFT, padx=(4, 20))
+        thr_entry.bind("<Return>", lambda _: self._run_search())
+        context_menu(thr_entry)
+
+        self._btn_run = tk.Button(row, text=_("doubles_run"),
+                                  command=self._run_search,
+                                  bg=FG_ACCENT, fg="#fff", font=FONT_NAV,
+                                  relief=tk.FLAT, padx=14, pady=3, cursor="hand2")
+        self._btn_run.pack(side=tk.LEFT, padx=(0, 8))
+
+        self._btn_clear = tk.Button(row, text=_("search_clear"),
+                                    command=self._clear_results,
+                                    bg=BG_FIELD, fg=FG_TEXT, font=FONT_LABEL,
+                                    relief=tk.FLAT, padx=10, pady=3, cursor="hand2")
+        self._btn_clear.pack(side=tk.LEFT)
+
+        tk.Frame(self, bg=FG_ACCENT, height=1).pack(fill=tk.X)
+
+    # ── Results area (pure Canvas, same technique as SearchView) ───────────────
+    def _build_results(self):
+        frm = tk.Frame(self, bg=BG_GALLERY)
+        frm.pack(fill=tk.BOTH, expand=True)
+        vsb = ttk.Scrollbar(frm, orient=tk.VERTICAL)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        self._cv = tk.Canvas(frm, bg=BG_GALLERY, highlightthickness=0,
+                             yscrollcommand=vsb.set, cursor="hand2")
+        self._cv.pack(fill=tk.BOTH, expand=True)
+        vsb.config(command=self._cv.yview)
+        self._cv.bind("<MouseWheel>", self._wheel)
+        self._cv.bind("<Button-4>",   self._wheel)
+        self._cv.bind("<Button-5>",   self._wheel)
+        self._cv.bind("<Button-1>",   self._on_click)
+
+    def _build_statusbar(self):
+        self._status = tk.StringVar(value="")
+        tk.Label(self, textvariable=self._status, bg=BG_CARD, fg=FG_LABEL,
+                 font=FONT_SMALL, anchor=tk.W, padx=8).pack(fill=tk.X)
+
+    # ── Search ────────────────────────────────────────────────────────────────
+    def _run_search(self):
+        try:
+            threshold = float(self._thr_var.get())
+        except ValueError:
+            messagebox.showerror(_("error_title"),
+                                 _("search_param_error"), parent=self)
+            return
+
+        if not SEARCHER_AVAILABLE or self._searcher is None:
+            messagebox.showerror(_("error_title"),
+                                 _("search_unavailable") if not SEARCHER_AVAILABLE
+                                 else _("search_index_not_ready"), parent=self)
+            return
+
+        self._btn_run.config(state=tk.DISABLED, text=_("search_running"))
+        self._status.set(_("search_running"))
+        self._results = []
+        self._draw()
+
+        def worker():
+            try:
+                results = self._searcher.find_missing_doubles(
+                    self._app.model, threshold=threshold)
+            except Exception as e:
+                results = []
+                if self.winfo_exists():
+                    self.after(0, lambda err=e: messagebox.showerror(
+                        _("error_title"), str(err), parent=self))
+            if self.winfo_exists():
+                self.after(0, lambda r=results: self._on_results(r))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_results(self, results: list[dict]):
+        if not self.winfo_exists():
+            return
+        self._results = results
+        n = len(results)
+        self._status.set(_("doubles_done").format(n=n))
+        self._btn_run.config(state=tk.NORMAL, text=_("doubles_run"))
+        self._tkimg.clear()
+        self._draw()
+
+    def _clear_results(self):
+        self._results = []
+        self._tkimg.clear()
+        self._status.set("")
+        self._cv.delete("all")
+        self._hits = []
+
+    # ── Canvas drawing ────────────────────────────────────────────────────────
+    def _on_cv_configure(self, event):
+        if event.width != self._last_cv_w:
+            self._last_cv_w = event.width
+            self._schedule_draw()
+
+    def _schedule_draw(self):
+        if self._pending_draw:
+            try:
+                self.after_cancel(self._pending_draw)
+            except Exception:
+                pass
+        self._pending_draw = self.after(60, self._draw)
+
+    def _draw(self):
+        self._pending_draw = None
+        if not self.winfo_exists():
+            return
+        self.update_idletasks()
+        cv_w = self._cv.winfo_width()
+        if cv_w < 10:
+            self._pending_draw = self.after(100, self._draw)
+            return
+
+        self._cv.delete("all")
+        self._hits = []
+        self._edit_hits = []
+
+        if not self._results:
+            self._cv.create_text(cv_w // 2, 60,
+                                 text=_("search_empty"),
+                                 fill=FG_LABEL, font=FONT_TITLE)
+            self._cv.configure(scrollregion=(0, 0, cv_w, 120))
+            return
+
+        M       = self.RES_PAD
+        pair_w  = 2 * self.RES_W + 2  # two thumbnails + separator
+        tile_w  = pair_w + 2 * M
+        cols    = max(1, cv_w // tile_w)
+        tile_w  = (cv_w - M * (cols + 1)) // cols
+        half    = (tile_w - 2 * M - 2) // 2
+        img_h   = int(half * self.RES_H / self.RES_W)
+        tile_h  = self.HDR_H + self.BADGE_H + img_h + self.EDIT_H + 2 * M
+
+        for pos, item in enumerate(self._results):
+            pct   = float(item.get("score", 0))
+            file1 = Path(item["file1"]) if item.get("file1") else None
+            file2 = Path(item["file2"]) if item.get("file2") else None
+            id1   = item.get("id1")
+            id2   = item.get("id2")
+
+            row, col = divmod(pos, cols)
+            x0 = M + col * (tile_w + M)
+            y0 = M + row * (tile_h + M)
+            x1 = x0 + tile_w
+            y1 = y0 + tile_h
+
+            border = self._pct_color(pct)
+            self._cv.create_rectangle(x0, y0, x1, y1,
+                                      fill=BG_CARD, outline=border, width=2)
+
+            # Header
+            self._cv.create_rectangle(x0, y0, x1, y0 + self.HDR_H,
+                                      fill=BG_FIELD, outline="")
+            hdr = _("doubles_pair").format(id1=id1, id2=id2)
+            self._cv.create_text(x0 + 5, y0 + self.HDR_H // 2,
+                                 text=hdr, anchor=tk.W,
+                                 fill=FG_ACCENT2, font=("Courier", 8, "bold"))
+
+            # Score badge
+            by0 = y0 + self.HDR_H
+            by1 = by0 + self.BADGE_H
+            self._cv.create_rectangle(x0, by0, x1, by1,
+                                      fill=self._pct_bg(pct), outline="")
+            self._cv.create_text((x0 + x1) // 2, (by0 + by1) // 2,
+                                 text=f"{pct:.1f} %",
+                                 fill="#fff", font=("Courier", 9, "bold"))
+
+            # Two thumbnails side by side
+            iy0 = by1 + M
+            iy1 = iy0 + img_h
+            lx0 = x0 + M
+            self._draw_img(file1, lx0, iy0, lx0 + half, iy1)
+            sep_x = lx0 + half + 1
+            self._cv.create_line(sep_x, iy0, sep_x, iy1, fill=FG_ACCENT, width=2)
+            rx0 = sep_x + 1
+            self._draw_img(file2, rx0, iy0, x1 - M, iy1)
+
+            self._hits.append((lx0, iy0, lx0 + half, iy1, id1, file1))
+            self._hits.append((rx0, iy0, x1 - M, iy1, id2, file2))
+
+            # "Edit" buttons below each thumbnail, opening the postcard
+            # in the main window
+            ey0 = iy1 + 2
+            ey1 = ey0 + self.EDIT_H - 4
+            self._draw_edit_button(lx0, ey0, lx0 + half, ey1, id1)
+            self._draw_edit_button(rx0, ey0, x1 - M, ey1, id2)
+
+        n_rows  = (len(self._results) + cols - 1) // cols
+        total_h = n_rows * (tile_h + M) + M
+        self._cv.configure(scrollregion=(0, 0, cv_w, total_h))
+
+    def _draw_edit_button(self, x0: int, y0: int, x1: int, y1: int, cid):
+        """Draw an "Edit" badge that opens the card in the main window."""
+        self._cv.create_rectangle(x0, y0, x1, y1,
+                                  fill=BG_FIELD, outline=FG_LINK)
+        self._cv.create_text((x0 + x1) // 2, (y0 + y1) // 2,
+                             text=_("doubles_edit"),
+                             fill=FG_LINK, font=("Courier", 8, "bold"))
+        self._edit_hits.append((x0, y0, x1, y1, cid))
+
+
+    def _draw_img(self, path: "Path | None", x0: int, y0: int, x1: int, y1: int):
+        """Display the image from its full path."""
+        w = x1 - x0
+        h = y1 - y0
+        if w <= 0 or h <= 0:
+            return
+        self._cv.create_rectangle(x0, y0, x1, y1, fill="#0a0a1a", outline="")
+        if path is None or not path.exists():
+            self._cv.create_text((x0 + x1) // 2, (y0 + y1) // 2,
+                                 text="—", fill=FG_LABEL, font=("Courier", 9))
+            return
+        key = (str(path), w, h)
+        if key not in self._tkimg:
+            pil = load_pil(path, w, h)
+            if pil is None:
+                self._cv.create_text((x0 + x1) // 2, (y0 + y1) // 2,
+                                     text="—", fill=FG_LABEL, font=("Courier", 9))
+                return
+            pw, ph = pil.size
+            scale   = min(w / pw, h / ph)
+            nw, nh  = max(1, int(pw * scale)), max(1, int(ph * scale))
+            resized = pil.resize((nw, nh), Image.LANCZOS)
+            self._tkimg[key] = ImageTk.PhotoImage(resized)
+        tkimg = self._tkimg[key]
+        cx = x0 + (w - tkimg.width())  // 2
+        cy = y0 + (h - tkimg.height()) // 2
+        self._cv.create_image(cx, cy, image=tkimg, anchor=tk.NW)
+
+    # ── Click → ImageViewer / Edit ──────────────────────────────────────────────
+    def _on_click(self, event):
+        cy = self._cv.canvasy(event.y)
+        cx = self._cv.canvasx(event.x)
+
+        for (x0, y0, x1, y1, cid) in self._edit_hits:
+            if x0 <= cx <= x1 and y0 <= cy <= y1:
+                self._open_in_main(cid)
+                return
+
+        for (x0, y0, x1, y1, cid, path) in self._hits:
+            if x0 <= cx <= x1 and y0 <= cy <= y1:
+                self._open_viewer(cid, path)
+                return
+
+    def _open_viewer(self, cid, path: "Path | None"):
+        if path is None:
+            return
+        id_str = f"#{cid}" if cid is not None else path.name
+        ImageViewer(self, path, id_str, self._t)
+
+    # ── "Edit" button → open the postcard in the main window ───────────────────
+    def _open_in_main(self, cid):
+        try:
+            cid = int(cid)
+        except (TypeError, ValueError):
+            return
+        if cid not in self._app._ids:
+            messagebox.showwarning(_("info_title"),
+                                   _("goto_not_found").format(id=cid),
+                                   parent=self)
+            return
+        if not self._app._ask_save_if_dirty():
+            return
+        self._app._load_card(self._app._ids.index(cid))
+        self._app.lift()
+        self._app.focus_force()
+
+    # ── Helpers ───────────────────────────────────────────────────────────────
+    @staticmethod
+    def _pct_color(pct: float) -> str:
+        if pct >= 90:
+            return "#e94560"
+        if pct >= 80:
+            return "#f5a623"
+        return "#2ecc71"
+
+    @staticmethod
+    def _pct_bg(pct: float) -> str:
+        if pct >= 90:
+            return "#5a1020"
+        if pct >= 80:
+            return "#5a4010"
+        return "#1a5a2a"
 
     def _wheel(self, e):
         if e.num == 4 or e.delta > 0:

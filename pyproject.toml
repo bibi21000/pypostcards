@@ -20,7 +20,7 @@ maintainers = [
   {name = "bibi21000", email = "bibi21000@gmail.com"}
 ]
 description = "Scan, manage and publish your postcards collection"
-version = "2.0.0"
+version = "2.0.7"
 requires-python = ">=3.9"
 dependencies = [
     "pillow",
@@ -137,6 +137,4 @@ libpostcards = [
     "translations/**/*.po",
     "translations/**/*.mo",
 ]
-
-
 

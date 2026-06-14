@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
-# ~ import os
+import os
 import sqlite3
 import time
 from pathlib import Path
@@ -172,10 +172,6 @@ class Model:
         self.cards_dir = self.datadir / "cards"
         self.db_path = self.datadir / "postcards.sqlite"
         self._conn: sqlite3.Connection | None = None
-        self.cards_dir.mkdir(exist_ok=True)
-        if self.db_path.exists() is False:
-            self.generate()
-
 
     # ------------------------------------------------------------------
     # Connexion SQLite
@@ -238,16 +234,62 @@ class Model:
         Écrit le JSON d'une carte dans cards/ et met à jour la base SQLite.
 
         Le champ ``mdate`` est automatiquement rafraîchi.
+
+        Si le champ ``doubles`` contient de nouveaux ids par rapport à
+        la version précédente, la réciprocité est assurée : pour chaque
+        nouvel id ``id2`` ajouté dans ``doubles`` de la carte ``id1``,
+        la carte ``id2`` est mise à jour pour inclure ``id1`` dans son
+        propre champ ``doubles`` (si ce n'est pas déjà le cas).
         """
         card = dict(card)  # copie défensive
+        card_id = str(card["id"])
+
+        # Détermine les nouveaux doublons ajoutés par rapport à l'existant
+        old_card = self.load_json(card_id)
+        old_doubles = {str(d) for d in (old_card.get("doubles") or [])}
+        new_doubles = {str(d) for d in (card.get("doubles") or [])}
+        added_doubles = new_doubles - old_doubles
+
+        card["doubles"] = sorted(new_doubles)
         card["mdate"] = int(time.time())
 
         self.cards_dir.mkdir(parents=True, exist_ok=True)
-        path = self._json_path(card["id"])
+        path = self._json_path(card_id)
         with path.open("w", encoding="utf-8") as fh:
             json.dump(card, fh, ensure_ascii=False, indent=2)
 
         self._upsert_card(card)
+
+        # Assure la réciprocité pour les nouveaux doublons
+        for other_id in added_doubles:
+            if other_id == card_id:
+                continue
+            self._add_double(other_id, card_id)
+
+    def _add_double(self, card_id: str, double_id: str) -> None:
+        """
+        Ajoute ``double_id`` au champ ``doubles`` de la carte ``card_id``
+        (JSON + base), si ce n'est pas déjà présent.
+        """
+        other = self.load_json(card_id)
+        other_doubles = {str(d) for d in (other.get("doubles") or [])}
+        if double_id in other_doubles:
+            return
+
+        other_doubles.add(double_id)
+        other["doubles"] = sorted(other_doubles)
+        other["mdate"] = int(time.time())
+
+        self.cards_dir.mkdir(parents=True, exist_ok=True)
+        path = self._json_path(card_id)
+        with path.open("w", encoding="utf-8") as fh:
+            json.dump(other, fh, ensure_ascii=False, indent=2)
+
+        self._upsert_card(other)
+        logger.info(
+            "Réciprocité doublons : ajout de %s dans doubles de %s",
+            double_id, card_id,
+        )
 
     def _upsert_card(self, card: dict) -> None:
         """INSERT OR REPLACE d'une carte dans la base."""
@@ -486,3 +528,175 @@ class Model:
                 pass
         return max(ids) + 1 if ids else 1
 
+    # ------------------------------------------------------------------
+    # Cartes uniques (exclusion des doublons)
+    # ------------------------------------------------------------------
+
+    def list_unique_cards(
+        self,
+        collection: str | None = None,
+        search: str | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[dict]:
+        """
+        Liste les cartes en excluant celles référencées comme doublons
+        par une autre carte (champ ``doubles``).
+
+        Une carte est exclue si son id apparaît dans le champ
+        ``doubles`` d'une autre carte.
+
+        Paramètres
+        ----------
+        collection : str | None
+            Filtre sur la collection (recherche dans le champ JSON ``collections``).
+        search : str | None
+            Recherche textuelle dans title, title2, description,
+            verso_text, recto_text, address.
+        limit : int | None
+            Nombre maximum de résultats.
+        offset : int
+            Décalage pour la pagination.
+        """
+        conditions: list[str] = [
+            "NOT EXISTS ("
+            "  SELECT 1 FROM cards AS c2, json_each(c2.doubles)"
+            "  WHERE json_each.value = cards.id"
+            ")"
+        ]
+        params: list[Any] = []
+
+        if collection:
+            conditions.append(
+                "EXISTS ("
+                "  SELECT 1 FROM json_each(cards.collections)"
+                "  WHERE value = ?"
+                ")"
+            )
+            params.append(collection)
+
+        if search:
+            like = f"%{search}%"
+            conditions.append(
+                "(title LIKE ? OR title2 LIKE ? OR description LIKE ?"
+                " OR verso_text LIKE ? OR recto_text LIKE ? OR address LIKE ?)"
+            )
+            params.extend([like] * 6)
+
+        where = f"WHERE {' AND '.join(conditions)}"
+        limit_clause = f"LIMIT {int(limit)}" if limit is not None else ""
+        offset_clause = f"OFFSET {int(offset)}" if offset else ""
+
+        sql = (
+            f"SELECT * FROM cards {where} "
+            f"ORDER BY CAST(id AS INTEGER) {limit_clause} {offset_clause}"
+        )
+        conn = self._get_conn()
+        cur = conn.execute(sql, params)
+        return [_row_to_card(r) for r in cur.fetchall()]
+
+    def count_unique_cards(
+        self,
+        collection: str | None = None,
+        search: str | None = None,
+    ) -> int:
+        """Retourne le nombre de cartes uniques (cf. list_unique_cards)."""
+        conditions: list[str] = [
+            "NOT EXISTS ("
+            "  SELECT 1 FROM cards AS c2, json_each(c2.doubles)"
+            "  WHERE json_each.value = cards.id"
+            ")"
+        ]
+        params: list[Any] = []
+
+        if collection:
+            conditions.append(
+                "EXISTS ("
+                "  SELECT 1 FROM json_each(cards.collections)"
+                "  WHERE value = ?"
+                ")"
+            )
+            params.append(collection)
+
+        if search:
+            like = f"%{search}%"
+            conditions.append(
+                "(title LIKE ? OR title2 LIKE ? OR description LIKE ?"
+                " OR verso_text LIKE ? OR recto_text LIKE ? OR address LIKE ?)"
+            )
+            params.extend([like] * 6)
+
+        where = f"WHERE {' AND '.join(conditions)}"
+        sql = f"SELECT COUNT(*) FROM cards {where}"
+        conn = self._get_conn()
+        cur = conn.execute(sql, params)
+        return cur.fetchone()[0]
+
+    # ------------------------------------------------------------------
+    # Suppression d'une carte
+    # ------------------------------------------------------------------
+
+    def delete_card(self, card_id: str | int) -> bool:
+        """
+        Supprime une carte : fichier JSON dans cards/ et ligne en base.
+
+        Si l'id supprimé apparaît dans le champ ``doubles`` d'autres
+        cartes, il en est retiré (JSON + base).
+
+        Retourne True si la carte existait et a été supprimée,
+        False si elle n'existait pas.
+        """
+        card_id = str(card_id)
+        path = self._json_path(card_id)
+        existed = path.exists()
+
+        # Supprime le fichier JSON
+        if existed:
+            path.unlink()
+
+        # Supprime la ligne en base
+        conn = self._get_conn()
+        conn.execute("DELETE FROM cards WHERE id = ?", (card_id,))
+        conn.commit()
+
+        # Retire card_id du champ doubles des autres cartes
+        cur = conn.execute(
+            "SELECT id FROM cards WHERE EXISTS ("
+            "  SELECT 1 FROM json_each(cards.doubles)"
+            "  WHERE json_each.value = ?"
+            ")",
+            (card_id,),
+        )
+        other_ids = [row["id"] for row in cur.fetchall()]
+
+        for other_id in other_ids:
+            self._remove_double(other_id, card_id)
+
+        if existed or other_ids:
+            logger.info(
+                "delete_card : carte %s supprimée (réf. retirée de %s)",
+                card_id, other_ids,
+            )
+
+        return existed
+
+    def _remove_double(self, card_id: str, double_id: str) -> None:
+        """
+        Retire ``double_id`` du champ ``doubles`` de la carte ``card_id``
+        (JSON + base), si présent.
+        """
+        other = self.load_json(card_id)
+        other_doubles = {str(d) for d in (other.get("doubles") or [])}
+        if double_id not in other_doubles:
+            return
+
+        other_doubles.discard(double_id)
+        other["doubles"] = sorted(other_doubles)
+        other["mdate"] = int(time.time())
+
+        self.cards_dir.mkdir(parents=True, exist_ok=True)
+        path = self._json_path(card_id)
+        with path.open("w", encoding="utf-8") as fh:
+            json.dump(other, fh, ensure_ascii=False, indent=2)
+
+        self._upsert_card(other)
