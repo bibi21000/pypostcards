@@ -478,7 +478,8 @@ class ListEditor(tk.Toplevel):
                   bg=BG_FIELD, fg=FG_TEXT, font=FONT_LABEL,
                   relief=tk.FLAT, padx=10).pack(side=tk.RIGHT, padx=4)
 
-        self.geometry("460x380")
+        self.update_idletasks()
+        self.minsize(self.winfo_reqwidth(), self.winfo_reqheight())
 
     def _on_sel(self, _):
         s = self._lb.curselection()
@@ -540,6 +541,156 @@ class ListEditor(tk.Toplevel):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+#  POI list editor (for a postcard's "poi" field)
+# ─────────────────────────────────────────────────────────────────────────────
+class PoiListEditor(tk.Toplevel):
+    """Editor for a postcard's list of POI ids.
+
+    Instead of free text, the input is a combobox listing all POI ids
+    already present in the database (Model.list_pois()), with the option
+    to type a new id to create one on save.
+    """
+
+    def __init__(self, parent, field_label: str, lines: list[str],
+                on_save, model, t):
+        super().__init__(parent)
+        self.title(f"{_('list_editor_title')} — {field_label}")
+        self.configure(bg=BG_MAIN)
+        self._on_save = on_save
+        self._model = model
+        self._t = t
+        self.resizable(True, True)
+
+        try:
+            self._known_pois = [p["id"] for p in model.list_pois()]
+        except Exception:
+            self._known_pois = []
+
+        tk.Label(self, text=f"{field_label}  —  {_('list_editor_hint')}",
+                 bg=BG_MAIN, fg=FG_ACCENT, font=FONT_TITLE).pack(padx=12, pady=(12, 4))
+
+        self._lb = tk.Listbox(self, bg=BG_INPUT, fg=FG_TEXT,
+                              selectbackground=FG_ACCENT, font=FONT_INPUT,
+                              width=48, height=10, relief=tk.FLAT, activestyle="none")
+        self._lb.pack(padx=12, pady=4, fill=tk.BOTH, expand=True)
+        for line in lines:
+            self._lb.insert(tk.END, line)
+
+        # Input bar: combobox of known POIs + free entry for a new one
+        row = tk.Frame(self, bg=BG_MAIN)
+        row.pack(fill=tk.X, padx=12, pady=4)
+        self._evar = tk.StringVar()
+        self._combo = ttk.Combobox(row, textvariable=self._evar,
+                                   values=self._known_pois, width=34,
+                                   font=FONT_INPUT)
+        self._combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
+        self._combo.bind("<Return>", lambda _: self._add_or_update())
+        context_menu(self._combo)
+        for txt, cmd in [(_("btn_add"), self._add), (_("btn_update"), self._update)]:
+            tk.Button(row, text=txt, command=cmd, bg=BG_FIELD, fg=FG_TEXT,
+                      font=FONT_LABEL, relief=tk.FLAT, padx=6).pack(side=tk.LEFT, padx=2)
+
+        tk.Label(self, text=_("poi_editor_hint"), bg=BG_MAIN, fg=FG_LABEL,
+                 font=("Courier", 8)).pack(padx=12, anchor=tk.W)
+
+        # List controls
+        ctrl = tk.Frame(self, bg=BG_MAIN)
+        ctrl.pack(fill=tk.X, padx=12, pady=4)
+        for txt, cmd, bg in [(_("btn_move_up"),   self._up,   BG_FIELD),
+                              (_("btn_move_down"), self._down, BG_FIELD),
+                              (_("btn_delete"),    self._del,  "#5a1a1a")]:
+            tk.Button(ctrl, text=txt, command=cmd, bg=bg, fg=FG_TEXT,
+                      font=FONT_LABEL, relief=tk.FLAT, padx=6).pack(side=tk.LEFT, padx=2)
+
+        self._lb.bind("<<ListboxSelect>>", self._on_sel)
+
+        bot = tk.Frame(self, bg=BG_MAIN)
+        bot.pack(fill=tk.X, padx=12, pady=(4, 12))
+        tk.Button(bot, text=_("btn_save_close"), command=self._save,
+                  bg=FG_ACCENT, fg="#fff", font=FONT_LABEL,
+                  relief=tk.FLAT, padx=10).pack(side=tk.RIGHT, padx=4)
+        tk.Button(bot, text=_("btn_cancel"), command=self.destroy,
+                  bg=BG_FIELD, fg=FG_TEXT, font=FONT_LABEL,
+                  relief=tk.FLAT, padx=10).pack(side=tk.RIGHT, padx=4)
+
+        self.update_idletasks()
+        self.minsize(self.winfo_reqwidth(), self.winfo_reqheight())
+
+    def _on_sel(self, _):
+        s = self._lb.curselection()
+        if s:
+            self._evar.set(self._lb.get(s[0]))
+
+    def _add(self):
+        v = self._evar.get().strip()
+        if not v:
+            return
+        self._lb.insert(tk.END, v)
+        self._evar.set("")
+        self._maybe_create_poi(v)
+
+    def _add_or_update(self):
+        if self._lb.curselection():
+            self._update()
+        else:
+            self._add()
+
+    def _update(self):
+        s = self._lb.curselection()
+        if not s:
+            return
+        v = self._evar.get().strip()
+        if v:
+            i = s[0]
+            self._lb.delete(i)
+            self._lb.insert(i, v)
+            self._lb.selection_set(i)
+            self._maybe_create_poi(v)
+
+    def _maybe_create_poi(self, poi_id: str):
+        """Create a skeleton POI in the database if it doesn't exist yet,
+        and refresh the combobox suggestion list."""
+        if poi_id in self._known_pois:
+            return
+        try:
+            self._model._ensure_poi(poi_id)
+        except Exception:
+            pass
+        self._known_pois.append(poi_id)
+        self._combo.config(values=self._known_pois)
+
+    def _del(self):
+        s = self._lb.curselection()
+        if s:
+            self._lb.delete(s[0])
+            self._evar.set("")
+
+    def _up(self):
+        s = self._lb.curselection()
+        if not s or s[0] == 0:
+            return
+        i = s[0]
+        v = self._lb.get(i)
+        self._lb.delete(i)
+        self._lb.insert(i - 1, v)
+        self._lb.selection_set(i - 1)
+
+    def _down(self):
+        s = self._lb.curselection()
+        if not s or s[0] == self._lb.size() - 1:
+            return
+        i = s[0]
+        v = self._lb.get(i)
+        self._lb.delete(i)
+        self._lb.insert(i + 1, v)
+        self._lb.selection_set(i + 1)
+
+    def _save(self):
+        self._on_save(list(self._lb.get(0, tk.END)))
+        self.destroy()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 #  GPS coordinates dialog
 # ─────────────────────────────────────────────────────────────────────────────
 class CoordDialog(tk.Toplevel):
@@ -547,7 +698,6 @@ class CoordDialog(tk.Toplevel):
         super().__init__(parent)
         self.title(_("coord_title"))
         self.configure(bg=BG_MAIN)
-        self.resizable(False, False)
         self._on_save = on_save
         self._t = t
 
@@ -595,13 +745,16 @@ class CoordDialog(tk.Toplevel):
         for txt, cmd, bg, fg in [
             (_("btn_open_osm"),   self._osm,         FG_LINK,   "#000"),
             (_("btn_copy_osm"),   self._copy_osm,    BG_FIELD,  FG_TEXT),
+            (_("btn_reset"),      self._reset,       "#5a1a1a", FG_TEXT),
             (_("btn_save_close"), self._save,         FG_ACCENT, "#fff"),
             (_("btn_cancel"),     self.destroy,       BG_FIELD,  FG_TEXT),
         ]:
             tk.Button(btns, text=txt, command=cmd, bg=bg, fg=fg,
                       font=FONT_LABEL, relief=tk.FLAT, padx=10).pack(side=tk.LEFT, padx=5)
 
-        self.geometry("480x300")
+        self.resizable(False, False)
+        self.update_idletasks()
+        self.minsize(self.winfo_reqwidth(), self.winfo_reqheight())
 
     def _coords(self):
         try:
@@ -637,7 +790,18 @@ class CoordDialog(tk.Toplevel):
                     pass
         messagebox.showerror(_("error_title"), _("coord_parse_error"), parent=self)
 
+    def _reset(self):
+        self._latv.set("")
+        self._lonv.set("")
+        self._pastev.set("")
+
     def _save(self):
+        lat_raw = self._latv.get().strip()
+        lon_raw = self._lonv.get().strip()
+        if not lat_raw and not lon_raw:
+            self._on_save([])
+            self.destroy()
+            return
         lat, lon = self._coords()
         if lat is not None:
             self._on_save([lat, lon])
@@ -1315,12 +1479,14 @@ class App(tk.Tk):
         self._data: dict = {}
         self._thumb_refs: dict = {}
         self._viewers: dict = {}
+        self._field_dialogs: list = []
         self._coord: list = []
         self._dirty = False
         self._gallery: GalleryView | None = None
         self._search_win: SearchView | None = None
         self._text_search_win: "TextSearchView | None" = None
         self._doubles_win: "DoublesSearchView | None" = None
+        self._poi_win: "PoiManagerView | None" = None
         self._nav_collection: str | None = self._load_last_filter()
 
         self._scan_ids()
@@ -1704,6 +1870,14 @@ class App(tk.Tk):
                 pass
         self._viewers.clear()
 
+        for win in list(self._field_dialogs):
+            try:
+                if win.winfo_exists():
+                    win.destroy()
+            except Exception:
+                pass
+        self._field_dialogs.clear()
+
         self._mark_clean()
         self._save_last_id(cid)
 
@@ -1813,6 +1987,7 @@ class App(tk.Tk):
         m.add_command(label=_("nav_textsearch"), command=self._open_text_search)
         m.add_command(label=_("nav_similar"), command=self._open_search)
         m.add_command(label=_("nav_doubles"), command=self._open_doubles_search)
+        m.add_command(label=_("nav_pois"), command=self._open_poi_manager)
         m.add_command(label=_("nav_gallery"), command=self._open_gallery)
 
         # Close the menu as soon as it loses focus (click outside,
@@ -1861,6 +2036,14 @@ class App(tk.Tk):
             return
         self._doubles_win = DoublesSearchView(self, self._t)
 
+    # ── POI manager ───────────────────────────────────────────────────────────
+    def _open_poi_manager(self):
+        if self._poi_win and self._poi_win.winfo_exists():
+            self._poi_win.lift()
+            self._poi_win.focus_force()
+            return
+        self._poi_win = PoiManagerView(self, self._t)
+
     # ── Viewer ────────────────────────────────────────────────────────────────
     def _open_viewer(self, side: str):
         cid = self._ids[self._current_idx]
@@ -1894,7 +2077,8 @@ class App(tk.Tk):
             self._lbl_collections.config(
                 text=", ".join(new_vals) if new_vals else "")
             self._mark_dirty()
-        CollectionEditor(self, current, self.collections, on_save, self._t)
+        win = CollectionEditor(self, current, self.collections, on_save, self._t)
+        self._field_dialogs.append(win)
 
     # ── Doubles ───────────────────────────────────────────────────────────────
     def _edit_doubles(self):
@@ -1905,7 +2089,8 @@ class App(tk.Tk):
                 text=", ".join(str(v) for v in new_vals) if new_vals
                 else "")
             self._mark_dirty()
-        DoublesEditor(self, current, on_save, self._t)
+        win = DoublesEditor(self, current, on_save, self._t)
+        self._field_dialogs.append(win)
 
     # ── Lists ─────────────────────────────────────────────────────────────────
     def _edit_list(self, key: str, label_key: str):
@@ -1915,7 +2100,11 @@ class App(tk.Tk):
             self._list_labels[key].config(
                 text=" / ".join(new_lines) if new_lines else "")
             self._mark_dirty()
-        ListEditor(self, _(label_key), lines, on_save, self._t)
+        if key == "poi":
+            win = PoiListEditor(self, _(label_key), lines, on_save, self.model, self._t)
+        else:
+            win = ListEditor(self, _(label_key), lines, on_save, self._t)
+        self._field_dialogs.append(win)
 
     # ── GPS ───────────────────────────────────────────────────────────────────
     def _edit_coord(self):
@@ -1924,7 +2113,8 @@ class App(tk.Tk):
             self._data["coord"] = c
             self._refresh_coord()
             self._mark_dirty()
-        CoordDialog(self, list(self._coord), on_save, self._t)
+        win = CoordDialog(self, list(self._coord), on_save, self._t)
+        self._field_dialogs.append(win)
 
     def _osm_direct(self):
         if len(self._coord) >= 2:
@@ -2733,6 +2923,233 @@ class DoublesSearchView(tk.Toplevel):
             self._cv.yview_scroll(-3, "units")
         else:
             self._cv.yview_scroll(3,  "units")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  POI (points of interest) manager
+# ─────────────────────────────────────────────────────────────────────────────
+class PoiManagerView(tk.Toplevel):
+    """Manage the points of interest (POIs) stored in the database.
+
+    Left: a list of all POIs (id + description preview).
+    Right: a detail form (id, description, GPS coordinates) with
+    New / Save / Delete actions, backed by Model.list_pois() /
+    get_poi() / write_poi() / delete_poi().
+    """
+
+    def __init__(self, parent: "App", t):
+        super().__init__(parent)
+        self._app = parent
+        self._t   = t
+        self.title(_("poi_title"))
+        self.configure(bg=BG_MAIN)
+        self.geometry("760x520")
+        self.minsize(560, 400)
+        self.resizable(True, True)
+
+        self._pois: list[dict] = []
+        self._selected_id: str | None = None
+        self._coord: list | None = None
+        self._is_new = False
+
+        self._build_ui()
+        self._reload()
+
+    # ── Construction ─────────────────────────────────────────────────────────
+    def _build_ui(self):
+        body = tk.Frame(self, bg=BG_MAIN)
+        body.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        # Left: list
+        left = tk.Frame(body, bg=BG_CARD)
+        left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 8))
+
+        tk.Label(left, text=_("poi_list_label"), bg=BG_CARD, fg=FG_ACCENT,
+                 font=FONT_TITLE).pack(anchor=tk.W, padx=8, pady=(8, 4))
+
+        lb_frm = tk.Frame(left, bg=BG_CARD)
+        lb_frm.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
+        vsb = ttk.Scrollbar(lb_frm, orient=tk.VERTICAL)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        self._lb = tk.Listbox(lb_frm, bg=BG_INPUT, fg=FG_TEXT,
+                              selectbackground=FG_ACCENT, font=FONT_INPUT,
+                              relief=tk.FLAT, activestyle="none",
+                              yscrollcommand=vsb.set)
+        self._lb.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.config(command=self._lb.yview)
+        self._lb.bind("<<ListboxSelect>>", self._on_select)
+
+        tk.Button(left, text=_("poi_new"), command=self._new,
+                  bg=BG_FIELD, fg=FG_ACCENT2, font=FONT_LABEL,
+                  relief=tk.FLAT, padx=8, cursor="hand2").pack(
+            fill=tk.X, padx=8, pady=(0, 8))
+
+        # Right: detail form
+        right = tk.Frame(body, bg=BG_CARD, width=320)
+        right.pack(side=tk.LEFT, fill=tk.Y)
+        right.pack_propagate(False)
+
+        tk.Label(right, text=_("poi_detail_label"), bg=BG_CARD, fg=FG_ACCENT,
+                 font=FONT_TITLE).pack(anchor=tk.W, padx=10, pady=(10, 6))
+
+        # Id
+        idf = tk.Frame(right, bg=BG_CARD)
+        idf.pack(fill=tk.X, padx=10, pady=4)
+        tk.Label(idf, text=_("poi_id"), bg=BG_CARD, fg=FG_LABEL,
+                 font=FONT_LABEL, width=12, anchor=tk.W).pack(side=tk.LEFT)
+        self._id_var = tk.StringVar()
+        self._id_entry = tk.Entry(idf, textvariable=self._id_var,
+                                  bg=BG_INPUT, fg=FG_TEXT, insertbackground=FG_TEXT,
+                                  font=FONT_INPUT, relief=tk.FLAT)
+        self._id_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        context_menu(self._id_entry)
+
+        # Description
+        descf = tk.Frame(right, bg=BG_CARD)
+        descf.pack(fill=tk.BOTH, expand=True, padx=10, pady=4)
+        tk.Label(descf, text=_("poi_description"), bg=BG_CARD, fg=FG_LABEL,
+                 font=FONT_LABEL, anchor=tk.W).pack(anchor=tk.W)
+        self._desc_txt = tk.Text(descf, height=6, wrap=tk.WORD,
+                                 bg=BG_INPUT, fg=FG_TEXT, insertbackground=FG_TEXT,
+                                 font=FONT_INPUT, relief=tk.FLAT, padx=6, pady=4,
+                                 undo=True)
+        self._desc_txt.pack(fill=tk.BOTH, expand=True, pady=(2, 0))
+        context_menu(self._desc_txt)
+
+        # GPS
+        gf = tk.Frame(right, bg=BG_CARD)
+        gf.pack(fill=tk.X, padx=10, pady=8)
+        tk.Label(gf, text=_("field_gps"), bg=BG_CARD, fg=FG_LABEL,
+                 font=FONT_LABEL, anchor=tk.W).pack(anchor=tk.W)
+        coord_row = tk.Frame(gf, bg=BG_CARD)
+        coord_row.pack(fill=tk.X, pady=(2, 0))
+        self._lbl_coord = tk.Label(coord_row, text="", bg=BG_INPUT, fg=FG_TEXT,
+                                   font=FONT_INPUT, anchor=tk.W, relief=tk.FLAT, padx=6)
+        self._lbl_coord.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        tk.Button(coord_row, text=_("btn_edit"), command=self._edit_coord,
+                  bg=BG_FIELD, fg=FG_ACCENT2, font=FONT_LABEL,
+                  relief=tk.FLAT, padx=8, cursor="hand2").pack(side=tk.RIGHT, padx=(4, 0))
+
+        # Actions
+        actions = tk.Frame(right, bg=BG_CARD)
+        actions.pack(fill=tk.X, padx=10, pady=10, side=tk.BOTTOM)
+        tk.Button(actions, text=_("btn_save_close"), command=self._save,
+                  bg=FG_ACCENT, fg="#fff", font=FONT_LABEL,
+                  relief=tk.FLAT, padx=10, cursor="hand2").pack(
+            side=tk.LEFT, padx=(0, 6))
+        tk.Button(actions, text=_("poi_delete"), command=self._delete,
+                  bg="#5a1a1a", fg=FG_TEXT, font=FONT_LABEL,
+                  relief=tk.FLAT, padx=10, cursor="hand2").pack(side=tk.LEFT)
+
+        self._status = tk.StringVar(value="")
+        tk.Label(self, textvariable=self._status, bg=BG_CARD, fg=FG_LABEL,
+                 font=FONT_SMALL, anchor=tk.W, padx=8).pack(fill=tk.X)
+
+    # ── Data ──────────────────────────────────────────────────────────────────
+    def _reload(self):
+        try:
+            self._pois = self._app.model.list_pois()
+        except Exception as e:
+            self._status.set(str(e))
+            self._pois = []
+
+        self._lb.delete(0, tk.END)
+        for poi in self._pois:
+            desc = (poi.get("description") or "").strip()
+            label = poi["id"] if not desc else f"{poi['id']}  —  {desc[:40]}"
+            self._lb.insert(tk.END, label)
+
+        self._status.set(_("poi_count").format(n=len(self._pois)))
+
+    def _on_select(self, _event=None):
+        sel = self._lb.curselection()
+        if not sel:
+            return
+        poi = self._pois[sel[0]]
+        self._load_poi(poi)
+
+    def _load_poi(self, poi: dict):
+        self._is_new = False
+        self._selected_id = poi["id"]
+        self._id_var.set(poi["id"])
+        self._id_entry.config(state=tk.DISABLED)
+        self._desc_txt.delete("1.0", tk.END)
+        self._desc_txt.insert("1.0", poi.get("description") or "")
+        self._coord = poi.get("coord")
+        self._refresh_coord()
+
+    def _new(self):
+        self._is_new = True
+        self._selected_id = None
+        self._lb.selection_clear(0, tk.END)
+        self._id_var.set("")
+        self._id_entry.config(state=tk.NORMAL)
+        self._desc_txt.delete("1.0", tk.END)
+        self._coord = None
+        self._refresh_coord()
+        self._id_entry.focus_set()
+
+    def _refresh_coord(self):
+        if self._coord and len(self._coord) >= 2:
+            self._lbl_coord.config(
+                text=f"lat {self._coord[0]:.6f}  /  lon {self._coord[1]:.6f}")
+        else:
+            self._lbl_coord.config(text="")
+
+    def _edit_coord(self):
+        def on_save(c):
+            self._coord = c
+            self._refresh_coord()
+        CoordDialog(self, list(self._coord or []), on_save, self._t)
+
+    # ── Save / Delete ─────────────────────────────────────────────────────────
+    def _save(self):
+        poi_id = self._id_var.get().strip()
+        if not poi_id:
+            messagebox.showwarning(_("info_title"), _("poi_id_required"), parent=self)
+            return
+
+        description = self._desc_txt.get("1.0", tk.END).rstrip("\n") or None
+
+        try:
+            self._app.model.write_poi({
+                "id": poi_id,
+                "description": description,
+                "coord": self._coord,
+            })
+        except Exception as e:
+            messagebox.showerror(_("error_title"), str(e), parent=self)
+            return
+
+        self._is_new = False
+        self._selected_id = poi_id
+        self._id_entry.config(state=tk.DISABLED)
+        self._reload()
+        self._select_in_list(poi_id)
+        self._status.set(_("poi_saved").format(id=poi_id))
+
+    def _delete(self):
+        if not self._selected_id:
+            return
+        if not messagebox.askyesno(_("info_title"),
+                                   _("poi_delete_confirm").format(id=self._selected_id),
+                                   parent=self):
+            return
+        try:
+            self._app.model.delete_poi(self._selected_id)
+        except Exception as e:
+            messagebox.showerror(_("error_title"), str(e), parent=self)
+            return
+        self._new()
+        self._reload()
+
+    def _select_in_list(self, poi_id: str):
+        for i, poi in enumerate(self._pois):
+            if poi["id"] == poi_id:
+                self._lb.selection_clear(0, tk.END)
+                self._lb.selection_set(i)
+                self._lb.see(i)
+                return
 
 
 # ─────────────────────────────────────────────────────────────────────────────

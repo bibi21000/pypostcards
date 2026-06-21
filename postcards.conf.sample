@@ -1,0 +1,111 @@
+[DEFAULT]
+# Image and JSON storage directory
+logdir=logs
+# Image and JSON storage directory
+datadir=datadir
+# Scanned image import directory
+importdir=import
+# Temporary directory
+tmpdir=tmp
+# Collections
+collections=Louhans,Seille,Autres
+# Sous-ensemble des collections proposées comme filtre sur la carte (/map/)
+collections_map=Louhans,Seille
+# Pour le publish sur un site distant
+max_workers = 5
+
+[tkmanager]
+
+[tkscan]
+# SANE device string of the default scanner (empty = simulate scan)
+scanner=airscan:e0:Brother MFC-L3740CDW series
+# Resolution for scanned images (dpi)
+resolution=600
+# Output file format: tiff, png or jpeg
+file_format=tiff
+# Destination folder for scanned images
+destination=import
+# Prefix for scanned image filenames
+prefix=scanned
+# Interval between batch scans (seconds)
+batch_interval=60
+# Force UI language (fr / en); empty = use system locale
+language=fr
+# Enable a custom scan area (mm)
+scan_area_enabled=false
+scan_area_left=0
+scan_area_top=0
+scan_area_width=148
+scan_area_height=105
+# Crop border (px) applied to each scanned image
+crop_border=0
+# JPEG quality (1-100)
+jpeg_quality=85
+# PNG compression level (0-9)
+png_compress=6
+# TIFF compression: deflate, lzw, jpeg or none
+tiff_compression=deflate
+
+[flask]
+host=127.0.0.1
+port=8001
+debug=True
+secret_key=secret
+# Vue OpenStreetMap utilisée pour générer l'image og:image de /map/
+# Format identique à l'ancre d'URL openstreetmap.org : zoom/latitude/longitude
+osm_map=11/46.6339/5.2096
+# Texte utilisé pour générer une icône stylisée si static/icon.png,
+# .jpg ou .jpeg n'existe pas (ignoré si l'un de ces fichiers est présent)
+icon=CPA Louhans
+# Fenêtre (en jours) des "nouveautés" mises en avant sur la page d'accueil
+recent_days=30
+# Si aucune carte n'a été ajoutée dans cette fenêtre, nombre de derniers
+# ajouts à proposer à la place (toujours triés par date d'ajout)
+recent_fallback_count=20
+
+[sync_ftp]
+protocol        = ftp          ; ftp | ftps | ftptls | sftp
+host            = ftp.example.com
+port            = 21           ; défaut : 21 (ftp/ftptls), 990 (ftps), 22 (sftp)
+username        = monuser
+password        = monsecret
+remote_base_dir = /public_html
+passive_mode    = true         ; recommandé derrière un NAT/firewall
+timeout         = 30           ; secondes
+delete_orphans  = false        ; true → supprime les fichiers distants absents en local
+dry_run         = false        ; true → simule sans rien transférer
+
+[sync_ftps]
+protocol        = ftps
+host            = ftp.secure.example.com
+port            = 990
+username        = user_ftps
+password        = secret_ftps
+remote_base_dir = /www
+passive_mode    = true
+timeout         = 30
+delete_orphans  = false
+dry_run         = false
+
+[sync_ftptls]
+protocol        = ftptls
+host            = ftp.tls.example.com
+port            = 21
+username        = user_tls
+password        = secret_tls
+remote_base_dir = /htdocs
+passive_mode    = true
+timeout         = 30
+
+[sync_ssh]
+protocol        = sftp
+host            = ssh.example.com
+port            = 22
+username        = deploy
+; Laisser password vide si on utilise une clé SSH
+password        =
+ssh_key_path    = /home/user/.ssh/id_rsa
+remote_base_dir = /var/www/html
+timeout         = 30
+delete_orphans  = true
+dry_run         = false

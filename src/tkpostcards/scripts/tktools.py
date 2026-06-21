@@ -549,5 +549,35 @@ def travels(common):
         travel_data['title2'] = travels[tt]['title2']
         model.write_travel(travel_data)
 
+@cli.command()
+@click.argument('config', default=None)
+@click.pass_obj
+def publish(common, config):
+    """Publish data to a remote web server"""
+    import logging
+    from pathlib import Path
+    import json
+    from ..libs.remotesync import (
+        RemoteSync
+    )
+
+    if config is None:
+        raise RuntimeError("Give me a config")
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+    )
+
+    sync = RemoteSync(common.conffile, section=config)
+    datadir = Path(common.datadir)
+    result = sync.sync_directory(datadir / 'size_div3', 'size_div3')
+    print(result)
+    result = sync.sync_directory(datadir / 'size_div10', 'size_div10')
+    print(result)
+    result = sync.sync_directory(datadir / 'size_div20', 'size_div20')
+    print(result)
+    result = sync.sync_file(datadir / 'postcards.sqlite')
+    print(result)
 
 

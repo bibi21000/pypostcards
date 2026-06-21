@@ -1,11 +1,10 @@
 /**
  * Diaporama (page d'accueil et blueprint slideshow) :
  *  - récupère une liste de cartes via l'URL configurée (config.cardsUrl)
- *  - les parcourt dans un ordre aléatoire sans répétition (mélange de
- *    type "shuffle bag" : toutes les cartes sont vues une fois avant
- *    qu'aucune ne soit revue, contrairement à un tirage aléatoire pur
- *    à chaque tour qui peut répéter certaines cartes et en oublier
- *    d'autres)
+ *  - si config.shuffle === false : parcourt les cartes dans l'ordre
+ *    reçu du serveur (cdate descendant pour l'accueil) puis reboucle
+ *  - sinon (défaut) : shuffle bag — toutes les cartes vues une fois
+ *    avant répétition (Fisher-Yates)
  *  - affiche le recto en fond plein écran avec un fondu croisé
  *  - affiche le verso dans une vignette PiP en bas à droite
  *  - affiche la date d'ajout de la carte courante (si l'élément
@@ -31,11 +30,12 @@
     var currentCard = null;
     var timer = null;
 
-    // Le "sac" de cartes restant à montrer dans le tour courant.
+    // Le "sac" de cartes restant à montrer dans le tour courant (mode shuffle).
     var bag = [];
-    // L'ensemble complet des cartes chargées depuis le serveur (réutilisé
-    // pour reconstituer un nouveau sac une fois celui-ci épuisé).
+    // L'ensemble complet des cartes chargées depuis le serveur.
     var allCards = [];
+    // Index courant pour le mode séquentiel (config.shuffle === false).
+    var seqIndex = 0;
 
     function imageUrl(relativePath) {
         return config.imageBaseUrl + relativePath;
@@ -85,11 +85,19 @@
     }
 
     function drawNextCard() {
+        if (!allCards.length) {
+            return null;
+        }
+        // Mode séquentiel (config.shuffle === false) : parcours dans l'ordre
+        // du serveur (cdate desc pour l'accueil), reboucle après la dernière.
+        if (config.shuffle === false) {
+            var card = allCards[seqIndex % allCards.length];
+            seqIndex++;
+            return card;
+        }
+        // Mode shuffle bag (défaut) : toutes les cartes vues avant répétition.
         if (!bag.length) {
             refillBag();
-        }
-        if (!bag.length) {
-            return null;
         }
         return bag.pop();
     }
@@ -188,7 +196,9 @@
     fetchCards()
         .then(function (cards) {
             allCards = cards;
-            refillBag();
+            if (config.shuffle !== false) {
+                refillBag();
+            }
             nextSlide();
             startLoop();
         })

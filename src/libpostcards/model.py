@@ -25,10 +25,27 @@ import logging
 import os
 import sqlite3
 import time
+import unicodedata
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+def _strip_accents(value: str | None) -> str | None:
+    """Remove diacritics (accents) from a string and lowercase it.
+
+    Used both to normalize values stored in SQLite (via a custom SQL
+    function) and to normalize search terms, so that searches are
+    accent-insensitive: "dodanes", "dôdanes" and "dodânes" all match
+    each other.
+    """
+    if value is None:
+        return None
+    normalized = unicodedata.normalize("NFKD", value)
+    without_accents = "".join(
+        ch for ch in normalized if not unicodedata.combining(ch)
+    )
+    return without_accents.lower()
 
 # ---------------------------------------------------------------------------
 # Schéma SQL
@@ -69,6 +86,15 @@ CREATE TABLE IF NOT EXISTS travels (
     end_lon     REAL,
     count       INTEGER,
     cards       TEXT        -- JSON array sérialisé [{id, title}, ...]
+);
+"""
+
+_DDL_POIS = """
+CREATE TABLE IF NOT EXISTS pois (
+    id          TEXT PRIMARY KEY,
+    description TEXT,
+    coord_lat   REAL,
+    coord_lon   REAL
 );
 """
 
@@ -166,6 +192,25 @@ def _row_to_travel(row: sqlite3.Row) -> dict:
     return d
 
 
+def _poi_to_row(poi: dict) -> dict:
+    """Convertit un dict POI en ligne SQL (champs plats)."""
+    coord = poi.get("coord") or []
+    return {
+        "id": str(poi["id"]),
+        "description": poi.get("description"),
+        "coord_lat": coord[0] if len(coord) > 0 else None,
+        "coord_lon": coord[1] if len(coord) > 1 else None,
+    }
+
+
+def _row_to_poi(row: sqlite3.Row) -> dict:
+    """Convertit une ligne SQL en dict POI."""
+    d = dict(row)
+    lat, lon = d.pop("coord_lat", None), d.pop("coord_lon", None)
+    d["coord"] = [lat, lon] if (lat is not None and lon is not None) else None
+    return d
+
+
 # ---------------------------------------------------------------------------
 # Classe Model
 # ---------------------------------------------------------------------------
@@ -249,6 +294,17 @@ class Model:
             self._conn.execute("PRAGMA foreign_keys=ON;")
             self._db_signature = self._current_db_signature()
 
+            # Fonction SQL personnalisée pour les recherches insensibles
+            # aux accents et à la casse (ex: "dodanes", "dôdanes" et
+            # "dodânes" doivent toutes se retrouver mutuellement).
+            try:
+                self._conn.create_function(
+                    "unaccent_lower", 1, _strip_accents, deterministic=True
+                )
+            except sqlite3.NotSupportedError:
+                # SQLite build too old to support the `deterministic` flag
+                self._conn.create_function("unaccent_lower", 1, _strip_accents)
+
         return self._conn
 
     def close(self) -> None:
@@ -320,6 +376,10 @@ class Model:
             json.dump(card, fh, ensure_ascii=False, indent=2)
 
         self._upsert_card(card)
+
+        # Crée automatiquement les POIs référencés qui n'existent pas encore
+        for poi_id in {str(p) for p in (card.get("poi") or [])}:
+            self._ensure_poi(poi_id)
 
         # Assure la réciprocité pour les nouveaux doublons
         for other_id in added_doubles:
@@ -435,6 +495,8 @@ class Model:
 
             if file_mdate > db_mdate:
                 self._upsert_card(card)
+                for poi_id in {str(p) for p in (card.get("poi") or [])}:
+                    self._ensure_poi(poi_id)
                 updated += 1
                 logger.debug("sync : carte %s mise à jour", card_id)
 
@@ -461,7 +523,7 @@ class Model:
         self.datadir.mkdir(parents=True, exist_ok=True)
 
         conn = self._get_conn()
-        conn.executescript(_DDL_CARDS + _DDL_TRAVELS + _DDL_INDEXES)
+        conn.executescript(_DDL_CARDS + _DDL_TRAVELS + _DDL_POIS + _DDL_INDEXES)
         conn.commit()
         logger.info("Base créée : %s", self.db_path)
 
@@ -474,6 +536,8 @@ class Model:
             with json_path.open(encoding="utf-8") as fh:
                 card = json.load(fh)
             self._upsert_card(card)
+            for poi_id in {str(p) for p in (card.get("poi") or [])}:
+                self._ensure_poi(poi_id)
             count += 1
 
         logger.info("generate : %d carte(s) importée(s)", count)
@@ -507,6 +571,9 @@ class Model:
         search : str | None
             Recherche textuelle dans title, title2, description,
             verso_text, recto_text, address.
+            Recherche textuelle (insensible aux accents et à la casse)
+            dans title, title2, description, verso_text, recto_text,
+            address, poi.
         limit : int | None
             Nombre maximum de résultats.
         offset : int
@@ -528,10 +595,15 @@ class Model:
         if search:
             like = f"%{search}%"
             conditions.append(
-                "(title LIKE ? OR title2 LIKE ? OR description LIKE ?"
-                " OR verso_text LIKE ? OR recto_text LIKE ? OR address LIKE ?)"
+                "(unaccent_lower(title) LIKE unaccent_lower(?)"
+                " OR unaccent_lower(title2) LIKE unaccent_lower(?)"
+                " OR unaccent_lower(description) LIKE unaccent_lower(?)"
+                " OR unaccent_lower(verso_text) LIKE unaccent_lower(?)"
+                " OR unaccent_lower(recto_text) LIKE unaccent_lower(?)"
+                " OR unaccent_lower(address) LIKE unaccent_lower(?)"
+                " OR unaccent_lower(poi) LIKE unaccent_lower(?))"
             )
-            params.extend([like] * 6)
+            params.extend([like] * 7)
 
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         limit_clause = f"LIMIT {int(limit)}" if limit is not None else ""
@@ -563,10 +635,15 @@ class Model:
         if search:
             like = f"%{search}%"
             conditions.append(
-                "(title LIKE ? OR title2 LIKE ? OR description LIKE ?"
-                " OR verso_text LIKE ? OR recto_text LIKE ? OR address LIKE ?)"
+                "(unaccent_lower(title) LIKE unaccent_lower(?)"
+                " OR unaccent_lower(title2) LIKE unaccent_lower(?)"
+                " OR unaccent_lower(description) LIKE unaccent_lower(?)"
+                " OR unaccent_lower(verso_text) LIKE unaccent_lower(?)"
+                " OR unaccent_lower(recto_text) LIKE unaccent_lower(?)"
+                " OR unaccent_lower(address) LIKE unaccent_lower(?)"
+                " OR unaccent_lower(poi) LIKE unaccent_lower(?))"
             )
-            params.extend([like] * 6)
+            params.extend([like] * 7)
 
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         sql = f"SELECT COUNT(*) FROM cards {where}"
@@ -612,8 +689,9 @@ class Model:
         collection : str | None
             Filtre sur la collection (recherche dans le champ JSON ``collections``).
         search : str | None
-            Recherche textuelle dans title, title2, description,
-            verso_text, recto_text, address.
+            Recherche textuelle (insensible aux accents et à la casse)
+            dans title, title2, description, verso_text, recto_text,
+            address, poi.
         limit : int | None
             Nombre maximum de résultats.
         offset : int
@@ -639,10 +717,15 @@ class Model:
         if search:
             like = f"%{search}%"
             conditions.append(
-                "(title LIKE ? OR title2 LIKE ? OR description LIKE ?"
-                " OR verso_text LIKE ? OR recto_text LIKE ? OR address LIKE ?)"
+                "(unaccent_lower(title) LIKE unaccent_lower(?)"
+                " OR unaccent_lower(title2) LIKE unaccent_lower(?)"
+                " OR unaccent_lower(description) LIKE unaccent_lower(?)"
+                " OR unaccent_lower(verso_text) LIKE unaccent_lower(?)"
+                " OR unaccent_lower(recto_text) LIKE unaccent_lower(?)"
+                " OR unaccent_lower(address) LIKE unaccent_lower(?)"
+                " OR unaccent_lower(poi) LIKE unaccent_lower(?))"
             )
-            params.extend([like] * 6)
+            params.extend([like] * 7)
 
         where = f"WHERE {' AND '.join(conditions)}"
         limit_clause = f"LIMIT {int(limit)}" if limit is not None else ""
@@ -746,10 +829,15 @@ class Model:
         if search:
             like = f"%{search}%"
             conditions.append(
-                "(title LIKE ? OR title2 LIKE ? OR description LIKE ?"
-                " OR verso_text LIKE ? OR recto_text LIKE ? OR address LIKE ?)"
+                "(unaccent_lower(title) LIKE unaccent_lower(?)"
+                " OR unaccent_lower(title2) LIKE unaccent_lower(?)"
+                " OR unaccent_lower(description) LIKE unaccent_lower(?)"
+                " OR unaccent_lower(verso_text) LIKE unaccent_lower(?)"
+                " OR unaccent_lower(recto_text) LIKE unaccent_lower(?)"
+                " OR unaccent_lower(address) LIKE unaccent_lower(?)"
+                " OR unaccent_lower(poi) LIKE unaccent_lower(?))"
             )
-            params.extend([like] * 6)
+            params.extend([like] * 7)
 
         where = f"WHERE {' AND '.join(conditions)}"
         sql = f"SELECT COUNT(*) FROM cards {where}"
@@ -825,3 +913,52 @@ class Model:
             json.dump(other, fh, ensure_ascii=False, indent=2)
 
         self._upsert_card(other)
+
+    def _ensure_poi(self, poi_id: str) -> None:
+        """
+        Crée une entrée squelette dans la table ``pois`` si ``poi_id``
+        n'y existe pas encore. N'écrase jamais un POI déjà renseigné.
+        """
+        conn = self._get_conn()
+        cur = conn.execute("SELECT 1 FROM pois WHERE id = ?", (poi_id,))
+        if cur.fetchone() is not None:
+            return
+        self.write_poi({"id": poi_id, "description": None, "coord": None})
+        logger.info("Nouveau POI créé automatiquement : %s", poi_id)
+
+    # ------------------------------------------------------------------
+    # POIs
+    # ------------------------------------------------------------------
+
+    def get_poi(self, poi_id: str) -> dict | None:
+        """Retourne un POI depuis la base SQLite, ou None si absent."""
+        conn = self._get_conn()
+        cur = conn.execute("SELECT * FROM pois WHERE id = ?", (poi_id,))
+        row = cur.fetchone()
+        return _row_to_poi(row) if row else None
+
+    def list_pois(self) -> list[dict]:
+        """Retourne la liste de tous les POIs."""
+        conn = self._get_conn()
+        cur = conn.execute("SELECT * FROM pois ORDER BY id")
+        return [_row_to_poi(r) for r in cur.fetchall()]
+
+    def write_poi(self, poi: dict) -> None:
+        """Écrit (INSERT OR REPLACE) un POI dans la base SQLite."""
+        row = _poi_to_row(poi)
+        cols = ", ".join(row.keys())
+        placeholders = ", ".join(f":{k}" for k in row)
+        sql = f"INSERT OR REPLACE INTO pois ({cols}) VALUES ({placeholders})"
+        conn = self._get_conn()
+        conn.execute(sql, row)
+        conn.commit()
+
+    def delete_poi(self, poi_id: str) -> bool:
+        """Supprime un POI de la base. Retourne True s'il existait."""
+        conn = self._get_conn()
+        cur = conn.execute("SELECT 1 FROM pois WHERE id = ?", (poi_id,))
+        existed = cur.fetchone() is not None
+        conn.execute("DELETE FROM pois WHERE id = ?", (poi_id,))
+        conn.commit()
+        return existed
+

@@ -6,7 +6,7 @@ PYTHON:=python3
 endif
 VERSION := $(shell grep -m 1 version pyproject.toml | tr -s ' ' | tr -d '"' | tr -d "'" | cut -d' ' -f3)
 
-.PHONY: venv build tests i18n-extract i18n-init i18n-update i18n-compile i18n
+.PHONY: venv build tests i18n-extract i18n-init i18n-update i18n-compile i18n docker
 
 venv:
 	${PYTHON} -m venv venv
@@ -23,6 +23,7 @@ serve:
 
 build:
 	rm -rf dist build
+	${MAKE} i18n-update
 	${MAKE} i18n-compile
 	./venv/bin/python3 -m build
 

@@ -48,7 +48,10 @@
         cardDetailUrlBase: "{{ url_for('home.card_detail', card_id='__ID__') }}",
         imageBaseUrl: "{{ url_for('home.images', filename='') }}",
         collection: {{ current_collection | tojson }},
-        addedOnLabel: "{{ _("Ajoutée le") }}"
+        addedOnLabel: "{{ _("Ajoutée le") }}",
+        // Désactivé : la page d'accueil affiche les cartes par cdate
+        // descendant (les plus récentes en premier), sans mélange aléatoire
+        shuffle: false
     };
 </script>
 <script src="{{ url_for('static', filename='js/slideshow.js') }}"></script>

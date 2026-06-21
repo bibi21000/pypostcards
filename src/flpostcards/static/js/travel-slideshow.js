@@ -29,12 +29,15 @@
     var slideshow = document.getElementById("slideshow");
     var captionCurrent = document.getElementById("caption-current");
     var captionNext = document.getElementById("caption-next");
+    var pauseBtn = document.getElementById("pause-btn");
+    var pauseIcon = document.getElementById("pause-icon");
 
     var layers = [layerA, layerB];
     var activeIndex = 0; // index dans `layers` du calque actuellement visible
     var cards = [];
     var currentIndex = -1;
     var timer = null;
+    var isPaused = false;
 
     var map = null;
     var markers = [];
@@ -220,6 +223,47 @@
             clearInterval(timer);
         }
         timer = setInterval(nextSlide, intervalMs);
+    }
+
+    function stopLoop() {
+        if (timer) {
+            clearInterval(timer);
+            timer = null;
+        }
+    }
+
+    function setPaused(paused) {
+        isPaused = paused;
+
+        if (isPaused) {
+            stopLoop();
+        } else {
+            startLoop();
+        }
+
+        if (pauseBtn) {
+            pauseBtn.classList.toggle("paused", isPaused);
+            var label = isPaused
+                ? (config.resumeLabel || "")
+                : (config.pauseLabel || "");
+            pauseBtn.setAttribute("aria-label", label);
+            pauseBtn.setAttribute("title", label);
+        }
+        if (pauseIcon) {
+            // Pause (deux barres) <-> Lecture (triangle)
+            pauseIcon.innerHTML = isPaused ? "&#9654;" : "&#10074;&#10074;";
+        }
+    }
+
+    function togglePause() {
+        setPaused(!isPaused);
+    }
+
+    if (pauseBtn) {
+        pauseBtn.addEventListener("click", function (event) {
+            event.stopPropagation();
+            togglePause();
+        });
     }
 
     slideshow.addEventListener("click", function (event) {

@@ -20,7 +20,7 @@ maintainers = [
   {name = "bibi21000", email = "bibi21000@gmail.com"}
 ]
 description = "Scan, manage and publish your postcards collection"
-version = "2.3.0"
+version = "2.4.8"
 requires-python = ">=3.9"
 dependencies = [
     "pillow",
@@ -52,6 +52,7 @@ tkinter = [
     "numpy",
     "tqdm",
     "zstandard",
+    "paramiko",
 ]
 ocr = [
     "python-doctr[torch]",

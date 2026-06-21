@@ -1,0 +1,38 @@
+[Unit]
+Description=PyPostcards Docker Container
+# Only start after Docker is ready
+After=docker.service
+After=open-webui-app.service
+Requires=docker.service
+# Wait for network to be available
+After=network-online.target
+
+[Service]
+Type=simple
+
+# Environment files
+EnvironmentFile=/var/lib/postcards/systemd.conf
+
+# Start the container in the foreground (no -d flag)
+ExecStart=/usr/bin/docker run \
+  --name pypostcards \
+  --rm \
+  -p 8001:8001 \
+  -v /var/lib/postcards/data:/data \
+  -v /var/lib/postcards/postcards.conf:/app/postcards.conf \
+  ${IMAGE}
+
+# Gracefully stop the container
+ExecStop=/usr/bin/docker stop -t 30 pypostcards
+
+# Timeout for start operation
+TimeoutStartSec=60
+# Timeout for stop operation
+TimeoutStopSec=35
+
+# Always restart on failure
+Restart=always
+RestartSec=45
+
+[Install]
+WantedBy=multi-user.target

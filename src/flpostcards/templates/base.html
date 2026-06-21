@@ -2,7 +2,7 @@
 <html lang="{{ get_locale() }}">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>{% block title %}{{ _("Cartes postales") }}{% endblock %}</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <link rel="icon" type="image/png" href="{{ url_for('home.icon') }}">
@@ -40,6 +40,10 @@
            href="{{ url_for('home.index') }}">
             {{ _("Accueil") }}
         </a>
+        <a class="site-nav-link {% if request.endpoint and request.endpoint.startswith('slideshow.') %}active{% endif %}"
+           href="{{ url_for('slideshow.index') }}">
+            {{ _("Diaporama") }}
+        </a>
         <a class="site-nav-link {% if request.endpoint == 'gallery.index' %}active{% endif %}"
            href="{{ url_for('gallery.index') }}">
             {{ _("Galerie") }}
@@ -51,10 +55,6 @@
         <a class="site-nav-link {% if request.endpoint and request.endpoint.startswith('map.') %}active{% endif %}"
            href="{{ url_for('map.index') }}">
             {{ _("Carte") }}
-        </a>
-        <a class="site-nav-link {% if request.endpoint and request.endpoint.startswith('slideshow.') %}active{% endif %}"
-           href="{{ url_for('slideshow.index') }}">
-            {{ _("Diaporama") }}
         </a>
     </nav>
     {% block content %}{% endblock %}

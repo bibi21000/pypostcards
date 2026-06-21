@@ -50,6 +50,28 @@
             {% endfor %}
         </div>
         {% endif %}
+
+        {% if card.coord and card.coord[0] is not none and card.coord[1] is not none %}
+        {% set lat = card.coord[0] %}
+        {% set lon = card.coord[1] %}
+        <div class="card-gps-links">
+            <a class="gps-link"
+               href="https://www.openstreetmap.org/?mlat={{ lat }}&mlon={{ lon }}&zoom=15"
+               target="_blank" rel="noopener noreferrer">
+                {{ _("OpenStreetMap") }}
+            </a>
+            <a class="gps-link"
+               href="https://www.google.com/maps?q={{ lat }},{{ lon }}"
+               target="_blank" rel="noopener noreferrer">
+                {{ _("Google Maps") }}
+            </a>
+            <a class="gps-link"
+               href="https://www.google.com/maps?layer=c&cbll={{ lat }},{{ lon }}"
+               target="_blank" rel="noopener noreferrer">
+                {{ _("Street View") }}
+            </a>
+        </div>
+        {% endif %}
     </div>
 </div>
 {% endblock %}

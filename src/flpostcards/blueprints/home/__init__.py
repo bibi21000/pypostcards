@@ -183,6 +183,76 @@ def api_recent_cards():
     return _no_cache(jsonify({"cards": items}))
 
 
+@bp.route("/robots.txt")
+def robots():
+    """robots.txt minimal, pointant vers le sitemap pour faciliter sa découverte."""
+    from flask import Response
+
+    lines = [
+        "User-agent: *",
+        "Allow: /",
+        f"Sitemap: {url_for('home.sitemap', _external=True)}",
+    ]
+    return Response("\n".join(lines), mimetype="text/plain")
+
+
+@bp.route("/sitemap.xml")
+def sitemap():
+    """
+    Sitemap XML listant les pages principales, toutes les fiches cartes
+    (avec lastmod basé sur mdate) et les parcours.
+
+    Les doublons ne sont pas listés séparément : ils ne possèdent pas
+    de fiche propre destinée à être indexée (cf. list_unique_cards).
+    """
+    from flask import Response
+
+    model = current_app.model
+
+    urls = []
+
+    def add(loc: str, lastmod: int | None = None, changefreq: str | None = None):
+        urls.append({"loc": loc, "lastmod": lastmod, "changefreq": changefreq})
+
+    add(url_for("home.index", _external=True), changefreq="daily")
+    add(url_for("slideshow.index", _external=True), changefreq="daily")
+    add(url_for("gallery.index", _external=True), changefreq="weekly")
+    add(url_for("travel.index", _external=True), changefreq="weekly")
+    add(url_for("map.index", _external=True), changefreq="weekly")
+
+    for card in model.list_unique_cards():
+        add(
+            url_for("home.card_detail", card_id=card["id"], _external=True),
+            lastmod=card.get("mdate"),
+            changefreq="monthly",
+        )
+
+    for travel in model.list_travels():
+        add(
+            url_for("travel.detail", travel_id=travel["id"], _external=True),
+            changefreq="monthly",
+        )
+
+    xml_parts = ['<?xml version="1.0" encoding="UTF-8"?>']
+    xml_parts.append('<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">')
+    for entry in urls:
+        xml_parts.append("  <url>")
+        xml_parts.append(f"    <loc>{entry['loc']}</loc>")
+        if entry["lastmod"]:
+            from datetime import datetime, timezone
+
+            lastmod_str = datetime.fromtimestamp(
+                entry["lastmod"], tz=timezone.utc
+            ).strftime("%Y-%m-%d")
+            xml_parts.append(f"    <lastmod>{lastmod_str}</lastmod>")
+        if entry["changefreq"]:
+            xml_parts.append(f"    <changefreq>{entry['changefreq']}</changefreq>")
+        xml_parts.append("  </url>")
+    xml_parts.append("</urlset>")
+
+    return Response("\n".join(xml_parts), mimetype="application/xml")
+
+
 @bp.route("/card/<card_id>")
 def card_detail(card_id: str):
     """Fiche détaillée d'une carte postale (recto/verso, métadonnées)."""

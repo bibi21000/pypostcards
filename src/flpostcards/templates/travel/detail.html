@@ -18,9 +18,15 @@
 
     <header class="page-header">
         <h1 class="page-title">{{ page_title }}</h1>
-        <a class="travel-back-link" href="{{ url_for('travel.index') }}">
-            &larr; {{ _("Tous les parcours") }}
-        </a>
+        <div class="travel-header-actions">
+            <a class="travel-back-link" href="{{ url_for('travel.index') }}">
+                &larr; {{ _("Tous les parcours") }}
+            </a>
+            <button type="button" class="travel-pause-btn" id="pause-btn"
+                    aria-label="{{ _("Mettre en pause") }}" title="{{ _("Mettre en pause") }}">
+                <span class="pause-icon" id="pause-icon">&#10074;&#10074;</span>
+            </button>
+        </div>
     </header>
 
     <div class="travel-captions">
@@ -40,7 +46,9 @@
         cardDetailUrlBase: "{{ url_for('home.card_detail', card_id='__ID__') }}",
         travelUrl: "{{ url_for('travel.detail', travel_id=travel.id) }}",
         imageBaseUrl: "{{ url_for('home.images', filename='') }}",
-        nextLabel: "{{ _("Suivant") }}"
+        nextLabel: "{{ _("Suivant") }}",
+        pauseLabel: "{{ _("Mettre en pause") }}",
+        resumeLabel: "{{ _("Reprendre") }}"
     };
 </script>
 <script src="{{ url_for('static', filename='vendor/leaflet/leaflet.js') }}"></script>

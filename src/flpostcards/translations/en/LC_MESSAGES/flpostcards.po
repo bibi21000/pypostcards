@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PROJECT VERSION\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-06-17 23:22+0000\n"
+"POT-Creation-Date: 2026-06-21 21:15+0200\n"
 "PO-Revision-Date: 2026-06-14 12:15+0000\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language: en\n"
@@ -18,231 +18,285 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Generated-By: Babel 2.18.0\n"
 
-#: blueprints/gallery/__init__.py:93
+#: src/flpostcards/blueprints/gallery/__init__.py:93
 #, python-format
 msgid "Galerie - %(collection)s"
 msgstr "Gallery - %(collection)s"
 
-#: blueprints/gallery/__init__.py:96 templates/base.html:45
+#: src/flpostcards/blueprints/gallery/__init__.py:96
+#: src/flpostcards/templates/base.html:49
 msgid "Galerie"
 msgstr "Gallery"
 
-#: blueprints/gallery/__init__.py:115
+#: src/flpostcards/blueprints/gallery/__init__.py:115
 msgid "Parcourez ma collection de cartes postales anciennes."
 msgstr "Browse my collection of old postcards."
 
-#: blueprints/home/__init__.py:57
+#: src/flpostcards/blueprints/home/__init__.py:57
 #, python-format
 msgid "Ma collection de cartes postales - %(collection)s"
 msgstr "My postcard collection - %(collection)s"
 
-#: blueprints/home/__init__.py:61
+#: src/flpostcards/blueprints/home/__init__.py:61
 msgid "Ma collection de cartes postales"
 msgstr "My postcard collection"
 
-#: blueprints/home/__init__.py:91 templates/base.html:12
+#: src/flpostcards/blueprints/home/__init__.py:91
+#: src/flpostcards/templates/base.html:12
 msgid "Découvrez ma collection de cartes postales anciennes."
 msgstr "Discover my collection of old postcards."
 
-#: blueprints/home/__init__.py:199 templates/card/detail.html:3
-#: templates/gallery/index.html:84
+#: src/flpostcards/blueprints/home/__init__.py:269
+#: src/flpostcards/templates/card/detail.html:3
+#: src/flpostcards/templates/gallery/index.html:89
 #, python-format
 msgid "Carte #%(id)s"
 msgstr "Card #%(id)s"
 
-#: blueprints/home/__init__.py:211
+#: src/flpostcards/blueprints/home/__init__.py:281
 msgid "Retour à la galerie"
 msgstr "Back to gallery"
 
-#: blueprints/home/__init__.py:213
+#: src/flpostcards/blueprints/home/__init__.py:283
 msgid "Retour au parcours"
 msgstr "Back to itinerary"
 
-#: blueprints/home/__init__.py:215
+#: src/flpostcards/blueprints/home/__init__.py:285
 msgid "Retour à la carte"
 msgstr "Back to map"
 
-#: blueprints/home/__init__.py:217 templates/card/detail.html:12
+#: src/flpostcards/blueprints/home/__init__.py:287
+#: src/flpostcards/templates/card/detail.html:12
 msgid "Retour au diaporama"
 msgstr "Back to slideshow"
 
-#: blueprints/map/__init__.py:26
+#: src/flpostcards/blueprints/map/__init__.py:30
+msgid "Carte - Points d'intérêt"
+msgstr "Map - Points of interest"
+
+#: src/flpostcards/blueprints/map/__init__.py:32
 #, python-format
 msgid "Carte - %(collection)s"
 msgstr "Map - %(collection)s"
 
-#: blueprints/map/__init__.py:28 templates/base.html:53
+#: src/flpostcards/blueprints/map/__init__.py:34
+#: src/flpostcards/templates/base.html:57
 msgid "Carte"
 msgstr "Map"
 
-#: blueprints/map/__init__.py:53
+#: src/flpostcards/blueprints/map/__init__.py:59
 msgid "Localisez ma collection de cartes postales sur la carte."
 msgstr "Locate my postcard collection on the map."
 
-#: blueprints/slideshow/__init__.py:43
+#: src/flpostcards/blueprints/slideshow/__init__.py:43
 #, python-format
 msgid "Diaporama - %(collection)s"
 msgstr "Slideshow - %(collection)s"
 
-#: blueprints/slideshow/__init__.py:46 templates/base.html:57
+#: src/flpostcards/blueprints/slideshow/__init__.py:46
+#: src/flpostcards/templates/base.html:45
 msgid "Diaporama"
 msgstr "Slideshow"
 
-#: blueprints/slideshow/__init__.py:55
+#: src/flpostcards/blueprints/slideshow/__init__.py:55
 msgid "Toutes mes cartes postales en diaporama."
 msgstr "All my postcards in a slideshow."
 
-#: blueprints/travel/__init__.py:22 templates/base.html:49
+#: src/flpostcards/blueprints/travel/__init__.py:22
+#: src/flpostcards/templates/base.html:53
 msgid "Parcours"
 msgstr "Itineraries"
 
-#: blueprints/travel/__init__.py:30 blueprints/travel/__init__.py:70
+#: src/flpostcards/blueprints/travel/__init__.py:30
+#: src/flpostcards/blueprints/travel/__init__.py:70
 msgid "Suivez mes parcours à travers ma collection de cartes postales."
 msgstr "Follow my journeys through my collection of old postcards."
 
-#: blueprints/travel/__init__.py:49
+#: src/flpostcards/blueprints/travel/__init__.py:49
 #, python-format
 msgid "Parcours #%(id)s"
 msgstr "Itinerary #%(id)s"
 
-#: templates/base.html:6 templates/base.html:11 templates/card/detail.html:5
+#: src/flpostcards/templates/base.html:6 src/flpostcards/templates/base.html:11
+#: src/flpostcards/templates/card/detail.html:5
 msgid "Cartes postales"
 msgstr "Postcards"
 
-#: templates/base.html:41
+#: src/flpostcards/templates/base.html:41
 msgid "Accueil"
 msgstr "Home"
 
-#: templates/card/detail.html:10
+#: src/flpostcards/templates/card/detail.html:10
 msgid "Retour"
 msgstr "Back"
 
-#: templates/card/detail.html:15
+#: src/flpostcards/templates/card/detail.html:15
 msgid "Cliquer pour agrandir"
 msgstr "Click to enlarge"
 
-#: templates/card/detail.html:19 templates/gallery/index.html:89
+#: src/flpostcards/templates/card/detail.html:19
+#: src/flpostcards/templates/gallery/index.html:94
 #, python-format
 msgid "Recto de la carte %(id)s"
 msgstr "Front of card %(id)s"
 
-#: templates/card/detail.html:23 templates/gallery/index.html:95
+#: src/flpostcards/templates/card/detail.html:23
+#: src/flpostcards/templates/gallery/index.html:100
 #, python-format
 msgid "Verso de la carte %(id)s"
 msgstr "Back of card %(id)s"
 
-#: templates/card/detail.html:25
+#: src/flpostcards/templates/card/detail.html:25
 msgid "Afficher l'autre face"
 msgstr "Show the other side"
 
-#: templates/card/detail.html:28
+#: src/flpostcards/templates/card/detail.html:28
 msgid "Aperçu de l'autre face"
 msgstr "Preview of the other side"
 
-#: templates/card/detail.html:63
+#: src/flpostcards/templates/card/detail.html:61
+msgid "OpenStreetMap"
+msgstr "OpenStreetMap"
+
+#: src/flpostcards/templates/card/detail.html:66
+msgid "Google Maps"
+msgstr "Google Maps"
+
+#: src/flpostcards/templates/card/detail.html:71
+msgid "Street View"
+msgstr "Street View"
+
+#: src/flpostcards/templates/card/detail.html:85
 msgid "Aperçu du recto"
 msgstr "Front preview"
 
-#: templates/card/detail.html:64
+#: src/flpostcards/templates/card/detail.html:86
 msgid "Aperçu du verso"
 msgstr "Back preview"
 
-#: templates/gallery/index.html:13
-msgid "Recherche"
-msgstr "Search"
-
-#: templates/gallery/index.html:19
-msgid "Rechercher..."
-msgstr "Search..."
-
-#: templates/gallery/index.html:26 templates/home/index.html:24
-#: templates/map/index.html:19 templates/slideshow/index.html:24
-msgid "Collection"
-msgstr "Collection"
-
-#: templates/gallery/index.html:29 templates/home/index.html:27
-#: templates/map/index.html:22 templates/slideshow/index.html:27
-msgid "Toutes les collections"
-msgstr "All collections"
-
-#: templates/gallery/index.html:41
-msgid "Affichage"
-msgstr "Display"
-
-#: templates/gallery/index.html:44
-msgid "Recto / verso"
-msgstr "Front / back"
-
-#: templates/gallery/index.html:47
-msgid "Recto"
-msgstr "Front"
-
-#: templates/gallery/index.html:50
-msgid "Verso"
-msgstr "Back"
-
-#: templates/gallery/index.html:56
-msgid "Doublons"
-msgstr "Duplicates"
-
-#: templates/gallery/index.html:59
-msgid "Sans doublons"
-msgstr "Without duplicates"
-
-#: templates/gallery/index.html:62
-msgid "Avec doublons"
-msgstr "With duplicates"
-
-#: templates/gallery/index.html:68
-msgid "Cartes par page"
-msgstr "Cards per page"
-
-#: templates/gallery/index.html:72
+#: src/flpostcards/templates/gallery/index.html:12
 #, python-format
-msgid "%(n)d par page"
-msgstr "%(n)d per page"
+msgid "%(count)d carte"
+msgstr "%(count)d card"
 
-#: templates/gallery/index.html:112 templates/gallery/index.html:115
-msgid "Précédent"
-msgstr "Previous"
-
-#: templates/gallery/index.html:119
-#, python-format
-msgid "Page %(page)d / %(pages)d"
-msgstr "Page %(page)d / %(pages)d"
-
-#: templates/gallery/index.html:124 templates/gallery/index.html:127
-#: templates/travel/detail.html:43
-msgid "Suivant"
-msgstr "Next"
-
-#: templates/gallery/index.html:133
-msgid "Aucune carte ne correspond à ces critères."
-msgstr "No card matches these criteria."
-
-#: templates/home/index.html:12 templates/slideshow/index.html:12
-msgid "Verso de la carte"
-msgstr "Back of the card"
-
-#: templates/home/index.html:51 templates/slideshow/index.html:51
-msgid "Ajoutée le"
-msgstr "Added on"
-
-#: templates/travel/detail.html:22
-msgid "Tous les parcours"
-msgstr "All itineraries"
-
-#: templates/travel/index.html:29
-#, python-format
-msgid "%(distance)s km"
-msgstr "%(distance)s km"
-
-#: templates/travel/index.html:31
+#: src/flpostcards/templates/gallery/index.html:12
+#: src/flpostcards/templates/travel/index.html:31
 #, python-format
 msgid "%(count)d cartes"
 msgstr "%(count)d cards"
 
-#: templates/travel/index.html:38
+#: src/flpostcards/templates/gallery/index.html:18
+msgid "Recherche"
+msgstr "Search"
+
+#: src/flpostcards/templates/gallery/index.html:24
+msgid "Rechercher..."
+msgstr "Search..."
+
+#: src/flpostcards/templates/gallery/index.html:31
+#: src/flpostcards/templates/home/index.html:24
+#: src/flpostcards/templates/map/index.html:18
+#: src/flpostcards/templates/slideshow/index.html:24
+msgid "Collection"
+msgstr "Collection"
+
+#: src/flpostcards/templates/gallery/index.html:34
+#: src/flpostcards/templates/home/index.html:27
+#: src/flpostcards/templates/map/index.html:21
+#: src/flpostcards/templates/slideshow/index.html:27
+msgid "Toutes les collections"
+msgstr "All collections"
+
+#: src/flpostcards/templates/gallery/index.html:46
+msgid "Affichage"
+msgstr "Display"
+
+#: src/flpostcards/templates/gallery/index.html:49
+msgid "Recto / verso"
+msgstr "Front / back"
+
+#: src/flpostcards/templates/gallery/index.html:52
+msgid "Recto"
+msgstr "Front"
+
+#: src/flpostcards/templates/gallery/index.html:55
+msgid "Verso"
+msgstr "Back"
+
+#: src/flpostcards/templates/gallery/index.html:61
+msgid "Doublons"
+msgstr "Duplicates"
+
+#: src/flpostcards/templates/gallery/index.html:64
+msgid "Sans doublons"
+msgstr "Without duplicates"
+
+#: src/flpostcards/templates/gallery/index.html:67
+msgid "Avec doublons"
+msgstr "With duplicates"
+
+#: src/flpostcards/templates/gallery/index.html:73
+msgid "Cartes par page"
+msgstr "Cards per page"
+
+#: src/flpostcards/templates/gallery/index.html:77
+#, python-format
+msgid "%(n)d par page"
+msgstr "%(n)d per page"
+
+#: src/flpostcards/templates/gallery/index.html:117
+#: src/flpostcards/templates/gallery/index.html:120
+msgid "Précédent"
+msgstr "Previous"
+
+#: src/flpostcards/templates/gallery/index.html:124
+#, python-format
+msgid "Page %(page)d / %(pages)d"
+msgstr "Page %(page)d / %(pages)d"
+
+#: src/flpostcards/templates/gallery/index.html:129
+#: src/flpostcards/templates/gallery/index.html:132
+#: src/flpostcards/templates/travel/detail.html:49
+msgid "Suivant"
+msgstr "Next"
+
+#: src/flpostcards/templates/gallery/index.html:138
+msgid "Aucune carte ne correspond à ces critères."
+msgstr "No card matches these criteria."
+
+#: src/flpostcards/templates/home/index.html:12
+#: src/flpostcards/templates/slideshow/index.html:12
+msgid "Verso de la carte"
+msgstr "Back of the card"
+
+#: src/flpostcards/templates/home/index.html:51
+#: src/flpostcards/templates/slideshow/index.html:51
+msgid "Ajoutée le"
+msgstr "Added on"
+
+#: src/flpostcards/templates/map/index.html:29
+msgid "Points d'intérêt"
+msgstr "Points of interest"
+
+#: src/flpostcards/templates/travel/detail.html:23
+msgid "Tous les parcours"
+msgstr "All itineraries"
+
+#: src/flpostcards/templates/travel/detail.html:26
+#: src/flpostcards/templates/travel/detail.html:50
+msgid "Mettre en pause"
+msgstr "Pause"
+
+#: src/flpostcards/templates/travel/detail.html:51
+msgid "Reprendre"
+msgstr "Resume"
+
+#: src/flpostcards/templates/travel/index.html:29
+#, python-format
+msgid "%(distance)s km"
+msgstr "%(distance)s km"
+
+#: src/flpostcards/templates/travel/index.html:38
 msgid "Aucun parcours disponible."
 msgstr "No itinerary available."
 
