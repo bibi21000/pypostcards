@@ -560,6 +560,7 @@ def travels(common):
 def publish(common, config, full):
     """Publish data to a remote web server"""
     import logging
+    import tempfile
     from pathlib import Path
     import json
     from ..libs.remotesync import (
@@ -588,4 +589,114 @@ def publish(common, config, full):
     result = sync.sync_file(datadir / 'postcards.sqlite')
     print(result)
 
+    fd, fname = tempfile.mkstemp(prefix='postcards')
+    os.unlink(fname)
+    with sync.fetch_locked("updates.json", fname) as ctx:
+        if os.path.isfile(fname):
+            with open(fname) as f:
+                remote_data = json.load(f)
+            localf = datadir / 'updates.json'
+            if localf.is_file():
+                with open(localf) as f:
+                    local_data = json.load(f)
+            else:
+                local_data = []
+            for data in remote_data:
+                if data not in local_data:
+                    local_data.append(data)
+            with open(localf, "w") as f:
+                json.dump(local_data, f, ensure_ascii=False, indent=2)
 
+@cli.command()
+@click.option('--dryrun', is_flag=True, default=True, help=_("Do not update files"))
+@click.pass_obj
+def fix_doubles(common, dryrun):
+    """Publish data to a remote web server"""
+    import sys
+    import time
+    from pathlib import Path
+    import json
+
+    def load_json(cards_dir: Path, card_id: str) -> dict | None:
+        path = cards_dir / f"{card_id}.json"
+        if not path.exists():
+            return None
+        with path.open(encoding="utf-8") as fh:
+            return json.load(fh)
+
+
+    def write_json(cards_dir: Path, card: dict, dry_run: bool) -> None:
+        card_id = str(card["id"])
+        path = cards_dir / f"{card_id}.json"
+        if dry_run:
+            print(f"    [dry-run] écriture de {path.name} : doubles={card['doubles']}")
+            return
+        # ~ with path.open("w", encoding="utf-8") as fh:
+            # ~ json.dump(card, fh, ensure_ascii=False, indent=2)
+
+    def fix_doubles(datadir: Path, dry_run: bool) -> int:
+        cards_dir = datadir / "cards"
+        if not cards_dir.exists():
+            print(f"Erreur : cards_dir introuvable : {cards_dir}", file=sys.stderr)
+            return 1
+
+        # Charger toutes les cartes
+        all_cards: dict[str, dict] = {}
+        for p in sorted(cards_dir.glob("*.json")):
+            try:
+                with p.open(encoding="utf-8") as fh:
+                    card = json.load(fh)
+                all_cards[str(card["id"])] = card
+            except (json.JSONDecodeError, KeyError) as e:
+                print(f"Avertissement : impossible de lire {p.name} : {e}", file=sys.stderr)
+
+        print(f"{len(all_cards)} cartes chargées depuis {cards_dir}")
+
+        # Construire le graphe des relations doubles (normalisé en strings)
+        # et détecter les liens non réciproques
+        to_fix: dict[str, set[str]] = {}  # card_id → ids à ajouter dans ses doubles
+
+        for card_id, card in all_cards.items():
+            doubles = {str(d) for d in (card.get("doubles") or [])}
+            for other_id in doubles:
+                if other_id == card_id:
+                    continue
+                if other_id not in all_cards:
+                    print(f"  Avertissement : carte {card_id} référence doublon inexistant {other_id}")
+                    continue
+                other = all_cards[other_id]
+                other_doubles = {str(d) for d in (other.get("doubles") or [])}
+                if card_id not in other_doubles:
+                    if other_id not in to_fix:
+                        to_fix[other_id] = set()
+                    to_fix[other_id].add(card_id)
+
+        if not to_fix:
+            print("Aucune relation non réciproque détectée. Base cohérente.")
+            return 0
+
+        print(f"\n{len(to_fix)} carte(s) à corriger :")
+        fixed = 0
+        now = int(time.time())
+
+        for card_id, missing_ids in sorted(to_fix.items(), key=lambda x: int(x[0])):
+            card = all_cards[card_id]
+            current_doubles = {str(d) for d in (card.get("doubles") or [])}
+            new_doubles = sorted(current_doubles | missing_ids, key=lambda x: int(x) if x.isdigit() else x)
+            print(f"  Carte {card_id} : ajout de {sorted(missing_ids)} → doubles={new_doubles}")
+            card["doubles"] = new_doubles
+            card["mdate"] = now
+            write_json(cards_dir, card, dry_run)
+            # Mettre à jour en mémoire pour les détections en cascade
+            all_cards[card_id] = card
+            fixed += 1
+
+        action = "seraient corrigées" if dry_run else "corrigées"
+        print(f"\n{fixed} carte(s) {action}.")
+        if dry_run:
+            print("Mode dry-run : aucun fichier modifié. Relancez sans --dry-run pour appliquer.")
+        else:
+            print("Relancez le script pour vérifier qu'il ne reste aucune relation non réciproque.")
+        return 0
+
+    fix_doubles(Path(common.datadir), dry_run=dryrun)

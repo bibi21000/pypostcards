@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PROJECT VERSION\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-06-26 11:49+0200\n"
+"POT-Creation-Date: 2026-06-28 11:09+0200\n"
 "PO-Revision-Date: 2026-06-14 12:15+0000\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language: en\n"
@@ -196,14 +196,14 @@ msgstr "Search..."
 #: src/flpostcards/templates/gallery/index.html:31
 #: src/flpostcards/templates/home/index.html:24
 #: src/flpostcards/templates/map/index.html:18
-#: src/flpostcards/templates/slideshow/index.html:24
+#: src/flpostcards/templates/slideshow/index.html:20
 msgid "Collection"
 msgstr "Collection"
 
 #: src/flpostcards/templates/gallery/index.html:34
 #: src/flpostcards/templates/home/index.html:27
 #: src/flpostcards/templates/map/index.html:21
-#: src/flpostcards/templates/slideshow/index.html:27
+#: src/flpostcards/templates/slideshow/index.html:23
 msgid "Toutes les collections"
 msgstr "All collections"
 
@@ -270,7 +270,6 @@ msgid "Verso de la carte"
 msgstr "Back of the card"
 
 #: src/flpostcards/templates/home/index.html:51
-#: src/flpostcards/templates/slideshow/index.html:51
 msgid "Ajoutée le"
 msgstr "Added on"
 

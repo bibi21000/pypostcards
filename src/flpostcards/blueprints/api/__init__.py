@@ -9,9 +9,9 @@ Routes :
   POST /api/v1/update          → enregistre un repérage de carte sur le terrain
 
 Authentification (endpoint POST) :
-  Un fichier JSON datadir/auth.json liste les tokens autorisés :
-      {"tokens": ["secret1", "secret2"]}
-  Le token est passé dans le corps JSON, champ "auth".
+  Utilise la table ``auths`` de la base SQLite via ``model.check_auth()``.
+  Les comptes sont créés avec ``model.write_auth(email, password)``.
+  Le corps JSON doit contenir les champs ``email`` et ``password``.
 """
 
 from __future__ import annotations
@@ -62,29 +62,6 @@ def _cards_with_coord(model) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Authentification
-# ---------------------------------------------------------------------------
-
-def _check_auth(token: str | None) -> bool:
-    """
-    Vérifie le token contre datadir/auth.json.
-    Format du fichier : {"tokens": ["token1", "token2", ...]}
-    Retourne False si le fichier est absent, malformé ou si le token
-    ne correspond pas.
-    """
-    if not token:
-        return False
-    datadir = Path(current_app.config["DATADIR"])
-    auth_path = datadir / "auth.json"
-    try:
-        data = json.loads(auth_path.read_text(encoding="utf-8"))
-        tokens = data.get("tokens", [])
-        return token in tokens
-    except (OSError, json.JSONDecodeError, TypeError):
-        return False
-
-
-# ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
 
@@ -95,9 +72,6 @@ def bounds():
 
     Retourne le rectangle englobant (bounding box) sous la forme :
       { "min_lat", "max_lat", "min_lon", "max_lon", "count" }
-
-    Utile pour initialiser la vue d'une carte mobile ou vérifier si la
-    position courante de l'utilisateur est dans la zone couverte.
     """
     model = current_app.model
     cards = _cards_with_coord(model)
@@ -164,28 +138,11 @@ def next_update():
     """
     Délai recommandé (en secondes) avant le prochain appel à /api/v1/nearby.
 
-    Le délai dépend de :
-      - la vitesse de déplacement (m/s) : plus on va vite, plus on doit
-        rafraîchir souvent, car la zone visible change rapidement ;
-      - le rayon de recherche (m) : un grand rayon est couvert plus
-        longtemps avant que de nouvelles cartes y entrent ;
-      - la proximité de la carte la plus proche : si une carte est déjà
-        très proche du bord du rayon, on rafraîchit bientôt.
-
     Paramètres de requête :
       lat    : latitude (float)
       lon    : longitude (float)
       radius : rayon de recherche en mètres (float)
       speed  : vitesse de déplacement en m/s (float, 0 = immobile)
-
-    Formule :
-      Si vitesse > 0 :
-        délai_base = (rayon - distance_min) / vitesse
-          où distance_min est la distance à la carte la plus proche
-          dans le rayon (ou rayon entier si aucune carte n'est dedans)
-        délai = clamp(délai_base, POLL_MIN, POLL_MAX)
-      Si vitesse = 0 (immobile) :
-        délai = POLL_MAX (inutile de rafraîchir si on ne bouge pas)
     """
     try:
         lat = float(request.args["lat"])
@@ -196,15 +153,11 @@ def next_update():
         return jsonify({"error": "lat, lon, radius (et optionnellement speed) sont obligatoires"}), 400
 
     if speed <= 0:
-        return jsonify({
-            "next_update_s": _POLL_MAX_S,
-            "reason": "immobile",
-        })
+        return jsonify({"next_update_s": _POLL_MAX_S, "reason": "immobile"})
 
     model = current_app.model
     cards = _cards_with_coord(model)
 
-    # Distance à la carte la plus proche dans le rayon
     min_dist_in_radius: float | None = None
     for card in cards:
         dist = _haversine(lat, lon, card["coord"][0], card["coord"][1])
@@ -212,17 +165,9 @@ def next_update():
             if min_dist_in_radius is None or dist < min_dist_in_radius:
                 min_dist_in_radius = dist
 
-    # Si aucune carte dans le rayon, on utilise le rayon entier comme
-    # référence (on vérifiera quand on aura parcouru l'équivalent du rayon)
     effective_distance = min_dist_in_radius if min_dist_in_radius is not None else radius
-
-    # Délai = temps pour parcourir (rayon - distance_min) à la vitesse actuelle
-    # Une carte au centre du rayon donne un délai long ; une carte au bord
-    # du rayon donne un délai court (elle risque de sortir bientôt)
     remaining = max(radius - effective_distance, 0)
-    delay = remaining / speed
-
-    delay = max(_POLL_MIN_S, min(delay, _POLL_MAX_S))
+    delay = max(_POLL_MIN_S, min(remaining / speed, _POLL_MAX_S))
 
     return jsonify({
         "next_update_s": round(delay, 1),
@@ -233,6 +178,46 @@ def next_update():
     })
 
 
+import os
+
+# ---------------------------------------------------------------------------
+# Lockfile
+# ---------------------------------------------------------------------------
+
+def _acquire_lock(lock_path: Path) -> bool:
+    """
+    Tente d'acquérir un verrou exclusif via un fichier .lck.
+
+    Utilise ``O_CREAT | O_EXCL`` qui est atomique sur POSIX : seul le
+    processus qui crée le fichier en premier obtient le verrou.
+
+    Attend jusqu'à ``LOCK_TIMEOUT`` secondes (config) que le fichier
+    disparaisse si quelqu'un d'autre le tient, par sondages espacés de
+    ``LOCK_POLL_INTERVAL`` secondes (config).
+    Retourne True si le verrou est acquis, False en cas de timeout.
+    """
+    timeout = current_app.config.get("LOCK_TIMEOUT", 60.0)
+    poll = current_app.config.get("LOCK_POLL_INTERVAL", 2.0)
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.close(fd)
+            return True
+        except FileExistsError:
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(poll)
+
+
+def _release_lock(lock_path: Path) -> None:
+    """Relâche le verrou en supprimant le fichier .lck."""
+    try:
+        lock_path.unlink()
+    except OSError:
+        pass
+
+
 @bp.route("/api/v1/update", methods=["POST"])
 def update():
     """
@@ -240,25 +225,36 @@ def update():
 
     Corps JSON (Content-Type: application/json) :
       {
-        "auth"    : "token secret",
+        "email"   : "utilisateur@example.com",
+        "password": "mot de passe",
         "card_id" : "123",
         "lat"     : 46.749,
         "lon"     : 5.620
       }
 
-    Si l'authentification réussit, enregistre le repérage dans
-    datadir/updates.json sous la forme d'une liste d'entrées :
-      { "card_id", "lat", "lon", "ts" (timestamp UNIX) }
+    L'authentification est vérifiée via ``model.check_auth(email, password)``
+    (table ``auths`` de la base SQLite, mots de passe hashés PBKDF2-SHA256).
 
-    Retourne :
+    L'écriture dans ``updates.json`` est protégée par un lockfile
+    ``updates.json.lck`` : si ce fichier existe, on attend jusqu'à 10
+    secondes qu'il disparaisse avant d'écrire (protection contre les
+    écritures concurrentes depuis plusieurs workers gunicorn).
+
+    En cas de succès, enregistre le repérage dans datadir/updates.json :
+      { "card_id", "email", "lat", "lon", "ts" (timestamp UNIX) }
+
+    Codes de retour :
       200 { "status": "ok", "card_id": "...", "ts": ... }
       401 { "error": "unauthorized" }
-      400 { "error": "..." }       — champ manquant ou invalide
+      400 { "error": "..." }   — champ manquant ou invalide
+      503 { "error": "..." }   — timeout sur le lockfile (rare)
     """
     data: dict[str, Any] = request.get_json(silent=True) or {}
 
-    token = data.get("auth")
-    if not _check_auth(token):
+    email = str(data.get("email", "")).strip()
+    password = str(data.get("password", ""))
+
+    if not current_app.model.check_auth(email, password):
         return jsonify({"error": "unauthorized"}), 401
 
     card_id = str(data.get("card_id", "")).strip()
@@ -272,24 +268,33 @@ def update():
         return jsonify({"error": "lat et lon sont obligatoires (float)"}), 400
 
     ts = int(time.time())
-    entry = {"card_id": card_id, "lat": lat, "lon": lon, "ts": ts}
+    entry = {"card_id": card_id, "email": email, "lat": lat, "lon": lon, "ts": ts}
 
     datadir = Path(current_app.config["DATADIR"])
     updates_path = datadir / "updates.json"
+    lock_suffix = current_app.config.get("LOCK_SUFFIX", ".lck")
+    lock_path = Path(str(updates_path) + lock_suffix)
 
-    # Lecture de la liste existante (crée si absente)
+    timeout = current_app.config.get("LOCK_TIMEOUT", 60.0)
+    if not _acquire_lock(lock_path):
+        return jsonify({
+            "error": f"verrou {lock_path.name} toujours présent après {timeout:.0f}s"
+        }), 503
+
     try:
-        updates: list[dict] = json.loads(updates_path.read_text(encoding="utf-8"))
-        if not isinstance(updates, list):
+        try:
+            updates: list[dict] = json.loads(updates_path.read_text(encoding="utf-8"))
+            if not isinstance(updates, list):
+                updates = []
+        except (OSError, json.JSONDecodeError):
             updates = []
-    except (OSError, json.JSONDecodeError):
-        updates = []
 
-    updates.append(entry)
+        updates.append(entry)
 
-    # Écriture atomique via fichier temporaire (évite la corruption)
-    tmp_path = updates_path.with_suffix(".json.tmp")
-    tmp_path.write_text(json.dumps(updates, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp_path.replace(updates_path)
+        tmp_path = updates_path.with_suffix(".json.tmp")
+        tmp_path.write_text(json.dumps(updates, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp_path.replace(updates_path)
+    finally:
+        _release_lock(lock_path)
 
     return jsonify({"status": "ok", "card_id": card_id, "ts": ts})

@@ -29,6 +29,17 @@ def load_config(app: Flask, config_path: str | Path = "postcards.conf") -> None:
     datadir = parser.get("DEFAULT", "datadir", fallback="datadir")
     app.config["DATADIR"] = Path(datadir).resolve()
 
+    # Paramètres de verrouillage fichier (lockfile) pour updates.json
+    app.config["LOCK_SUFFIX"] = parser.get(
+        "DEFAULT", "lock_suffix", fallback=".lck"
+    ).strip()
+    app.config["LOCK_POLL_INTERVAL"] = parser.getfloat(
+        "DEFAULT", "lock_poll_interval", fallback=2.0
+    )
+    app.config["LOCK_TIMEOUT"] = parser.getfloat(
+        "DEFAULT", "lock_timeout", fallback=60.0
+    )
+
     # Liste des collections connues (définie dans [DEFAULT], accessible
     # depuis [flask] via l'héritage configparser)
     collections_raw = parser.get("DEFAULT", "collections", fallback="")

@@ -51,6 +51,9 @@ class SyncConfig:
     dry_run: bool = False          # simuler sans transférer
     logdir: str = ""               # répertoire de stockage des logs de session
     max_workers: int = 5           # transferts simultanés lors de sync_directory
+    lock_suffix: str = ".lck"      # suffixe du fichier verrou (fetch_locked)
+    lock_poll_interval: float = 2.0  # secondes entre deux sondages du verrou
+    lock_timeout: float = 60.0      # secondes avant LockTimeoutError
 
     @classmethod
     def from_ini(cls, path: str | Path, section: str = "remotesync") -> "SyncConfig":
@@ -84,6 +87,9 @@ class SyncConfig:
             # logdir est dans [DEFAULT] (hérité par toutes les sections)
             logdir=s.get("logdir", ""),
             max_workers=int(s.get("max_workers", 5)),
+            lock_suffix=s.get("lock_suffix", ".lck"),
+            lock_poll_interval=float(s.get("lock_poll_interval", 2.0)),
+            lock_timeout=float(s.get("lock_timeout", 60.0)),
         )
 
 
@@ -350,6 +356,16 @@ class _BaseBackend(ABC):
         ...
 
     @abstractmethod
+    def remote_exists(self, remote_path: str) -> bool:
+        """Retourne True si le chemin distant existe (fichier ou répertoire)."""
+        ...
+
+    @abstractmethod
+    def create_empty_file(self, remote_path: str) -> None:
+        """Crée un fichier vide sur le serveur distant (utilisé pour les locks)."""
+        ...
+
+    @abstractmethod
     def download_file(self, remote_path: str, local_path: Path) -> None:
         """Télécharge un fichier distant vers local_path."""
         ...
@@ -453,6 +469,39 @@ class _FTPBackend(_BaseBackend):
                 result.append(item)
         return result
 
+    def remote_exists(self, remote_path: str) -> bool:
+        try:
+            self._ftp.sendcmd(f"MDTM {remote_path}")
+            return True
+        except ftplib.error_perm:
+            return False
+
+    def create_empty_file(self, remote_path: str) -> None:
+        """
+        Crée un fichier vide en mode pseudo-exclusif via FTP.
+
+        FTP ne supporte pas O_CREAT|O_EXCL nativement. On simule l'atomicité
+        avec un fichier temporaire unique puis un RNFR/RNTO (rename) :
+        si le fichier cible existe déjà, le rename échoue avec une erreur 550.
+        """
+        import io
+        import uuid
+        tmp_path = remote_path + f".tmp_{uuid.uuid4().hex}"
+        try:
+            # 1. Upload du fichier temporaire (nom unique → pas de collision)
+            self._ftp.storbinary(f"STOR {tmp_path}", io.BytesIO(b""))
+            # 2. Rename atomique : échoue si la cible existe déjà
+            self._ftp.rename(tmp_path, remote_path)
+        except ftplib.error_perm as exc:
+            # Nettoyage du temporaire en cas d'échec du rename
+            try:
+                self._ftp.delete(tmp_path)
+            except Exception:
+                pass
+            raise FileExistsError(
+                f"Le verrou {remote_path!r} existe déjà (ou rename refusé) : {exc}"
+            ) from exc
+
     def download_file(self, remote_path: str, local_path: Path) -> None:
         local_path.parent.mkdir(parents=True, exist_ok=True)
         with open(local_path, "wb") as fh:
@@ -545,12 +594,277 @@ class _SFTPBackend(_BaseBackend):
                 result.append(full)
         return result
 
+    def remote_exists(self, remote_path: str) -> bool:
+        try:
+            self._sftp.stat(remote_path)
+            return True
+        except FileNotFoundError:
+            return False
+
+    def create_empty_file(self, remote_path: str) -> None:
+        """
+        Crée un fichier vide en mode exclusif (O_CREAT | O_EXCL) via SFTP.
+
+        Si le fichier existe déjà, paramiko lève OSError(EEXIST) et on
+        convertit en FileExistsError pour uniformiser avec le backend FTP.
+        """
+        import os as _os
+        O_CREAT = _os.O_CREAT
+        O_EXCL  = _os.O_EXCL
+        O_WRONLY = _os.O_WRONLY
+        try:
+            f = self._sftp.open(remote_path, mode="x")  # 'x' = O_CREAT|O_EXCL|O_WRONLY
+            f.close()
+        except OSError as exc:
+            raise FileExistsError(
+                f"Le verrou {remote_path!r} existe déjà : {exc}"
+            ) from exc
+
     def download_file(self, remote_path: str, local_path: Path) -> None:
         local_path.parent.mkdir(parents=True, exist_ok=True)
         self._sftp.get(remote_path, str(local_path))
 
     def delete_remote(self, remote_path: str) -> None:
         self._sftp.remove(remote_path)
+
+
+# ---------------------------------------------------------------------------
+# Exceptions publiques
+# ---------------------------------------------------------------------------
+
+class LockTimeoutError(TimeoutError):
+    """
+    Levée par :class:`LockedFetch` lorsque le verrou distant n'a pas disparu
+    avant l'expiration du délai ``lock_timeout``.
+
+    Attributs
+    ---------
+    lock_path   : chemin du fichier verrou qui bloque.
+    timeout     : durée d'attente maximale configurée (secondes).
+    elapsed     : durée réellement attendue avant l'abandon (secondes).
+    """
+
+    def __init__(self, lock_path: str, timeout: float, elapsed: float):
+        self.lock_path = lock_path
+        self.timeout = timeout
+        self.elapsed = elapsed
+        super().__init__(
+            f"Le verrou {lock_path!r} existe toujours après {elapsed:.1f}s "
+            f"(timeout={timeout:.1f}s). Abandon sans suppression du verrou."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Context manager — téléchargement avec verrou distant
+# ---------------------------------------------------------------------------
+
+class LockedFetch:
+    """
+    Context manager retourné par :meth:`RemoteSync.fetch_locked`.
+
+    Cycle de vie
+    ------------
+    ``__enter__``
+        1. Ouvre une connexion unique au serveur.
+        2. **Attend** que ``<remote_path><lock_suffix>`` disparaisse si présent,
+           en sondant toutes les ``lock_poll_interval`` secondes.
+           Lève :class:`LockTimeoutError` si ``lock_timeout`` est dépassé
+           (le verrou existant n'est **pas** supprimé).
+        3. Crée ``<remote_path><lock_suffix>`` (marque notre propre verrou).
+        4. Télécharge ``<remote_path>`` vers la destination locale.
+
+    ``__exit__`` (succès OU exception OU interruption)
+        5. Si le téléchargement a réussi : supprime ``<remote_path>`` du serveur.
+        6. Supprime notre ``<remote_path><lock_suffix>`` dans **tous les cas**.
+        7. Ferme la connexion.
+
+    La suppression du lock (étape 6) est protégée par un ``try/except``
+    indépendant afin de ne jamais masquer une exception métier.
+
+    Attributs exposés dans le bloc ``with``
+    ----------------------------------------
+    ``result``  :class:`SyncResult` — résultat du téléchargement.
+    """
+
+    def __init__(
+        self,
+        sync: "RemoteSync",
+        remote_path: str,
+        local_path: Optional[str | Path],
+        lock_suffix: str,
+        poll_interval: float,
+        timeout: float,
+    ):
+        self._sync = sync
+        self._remote_path = sync._resolve_remote(remote_path)
+        self._lock_path = self._remote_path + lock_suffix
+        self._local_path = local_path
+        self._poll_interval = poll_interval
+        self._timeout = timeout
+        self._backend: Optional[_BaseBackend] = None
+        self._lock_created: bool = False   # True uniquement si C'EST NOUS qui avons créé le lock
+        self.result: SyncResult = SyncResult()
+
+    # ------------------------------------------------------------------
+
+    def __enter__(self) -> "LockedFetch":
+        import time
+        cfg = self._sync.config
+
+        remote_name = self._remote_path.rstrip("/").split("/")[-1]
+
+        # Résolution destination locale
+        if self._local_path is None:
+            dest = Path.cwd() / remote_name
+        else:
+            dest = Path(self._local_path)
+            if dest.is_dir():
+                dest = dest / remote_name
+        self._dest = dest
+
+        # Connexion unique pour toute la durée du contexte
+        self._backend = self._sync._build_backend()
+        self._backend.connect()
+
+        # ── 1. Attente si un verrou existe déjà ──────────────────────────
+        deadline = time.monotonic() + self._timeout
+        elapsed = 0.0
+        while self._backend.remote_exists(self._lock_path):
+            elapsed = time.monotonic() - (deadline - self._timeout)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                # Timeout : on ferme la connexion et on lève sans supprimer le lock
+                try:
+                    self._backend.disconnect()
+                except Exception:
+                    pass
+                self._backend = None
+                raise LockTimeoutError(self._lock_path, self._timeout, elapsed)
+
+            wait = min(self._poll_interval, remaining)
+            logger.info(
+                "[LOCK-WAIT] %s présent, nouvel essai dans %.1fs (%.1f/%.1fs écoulées)",
+                self._lock_path, wait, elapsed, self._timeout,
+            )
+            time.sleep(wait)
+
+        # ── 2. Création de notre verrou (mode exclusif) ───────────────────
+        # On reste dans une boucle car deux processus peuvent passer le
+        # remote_exists() simultanément et tenter le create en même temps.
+        # Celui qui perd obtient FileExistsError et retourne attendre.
+        while True:
+            try:
+                self._backend.create_empty_file(self._lock_path)
+                self._lock_created = True
+                logger.info("[LOCK]     créé   : %s", self._lock_path)
+                break
+            except FileExistsError:
+                # Un autre processus nous a devancés : on retourne attendre
+                elapsed = time.monotonic() - (deadline - self._timeout)
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    try:
+                        self._backend.disconnect()
+                    except Exception:
+                        pass
+                    self._backend = None
+                    raise LockTimeoutError(self._lock_path, self._timeout, elapsed)
+                wait = min(self._poll_interval, remaining)
+                logger.info(
+                    "[LOCK-RACE] %s pris par un concurrent, attente %.1fs",
+                    self._lock_path, wait,
+                )
+                time.sleep(wait)
+                # Re-vérification : attendre que le verrou concurrent disparaisse
+                while self._backend.remote_exists(self._lock_path):
+                    elapsed = time.monotonic() - (deadline - self._timeout)
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        try:
+                            self._backend.disconnect()
+                        except Exception:
+                            pass
+                        self._backend = None
+                        raise LockTimeoutError(self._lock_path, self._timeout, elapsed)
+                    wait = min(self._poll_interval, remaining)
+                    logger.info(
+                        "[LOCK-WAIT] %s présent, nouvel essai dans %.1fs (%.1f/%.1fs écoulées)",
+                        self._lock_path, wait, elapsed, self._timeout,
+                    )
+                    time.sleep(wait)
+            except Exception as exc:
+                try:
+                    self._backend.disconnect()
+                except Exception:
+                    pass
+                self._backend = None
+                raise RuntimeError(
+                    f"Impossible de créer le verrou {self._lock_path!r} : {exc}"
+                ) from exc
+
+        # ── 3. Téléchargement ─────────────────────────────────────────────
+        try:
+            if cfg.dry_run:
+                logger.info("[DRY-RUN] %s ← %s", dest, self._remote_path)
+                self.result.uploaded.append(str(dest))
+            else:
+                logger.info("[DOWNLOAD] %s ← %s", dest, self._remote_path)
+                self._backend.download_file(self._remote_path, dest)
+                self.result.uploaded.append(str(dest))
+
+        except Exception as exc:
+            msg = f"{self._remote_path} → {dest} : {exc}"
+            self.result.errors.append(msg)
+            logger.error("[ERROR]    %s", msg)
+            if dest.exists() and dest.stat().st_size == 0:
+                try:
+                    dest.unlink()
+                except OSError:
+                    pass
+
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
+        """
+        Nettoyage garanti :
+          - supprime le fichier distant si le téléchargement a réussi
+          - supprime notre .lck dans tous les cas (sauf LockTimeoutError)
+          - ferme la connexion
+        Retourne toujours ``False`` : les exceptions du bloc ``with`` se propagent.
+        """
+        if self._backend is None:
+            # Connexion déjà fermée (LockTimeoutError ou échec de connexion)
+            return False
+
+        # ── 4. Suppression du fichier distant si téléchargement réussi ────
+        if self.result.success and not self._sync.config.dry_run:
+            try:
+                self._backend.delete_remote(self._remote_path)
+                logger.info("[DELETE]   distant : %s", self._remote_path)
+            except Exception as exc:
+                msg = f"Impossible de supprimer {self._remote_path!r} : {exc}"
+                self.result.errors.append(msg)
+                logger.error("[ERROR]    %s", msg)
+
+        # ── 5. Suppression de notre verrou (toujours, sauf si on ne l'a pas créé)
+        if self._lock_created:
+            try:
+                self._backend.delete_remote(self._lock_path)
+                logger.info("[UNLOCK]   supprimé : %s", self._lock_path)
+            except Exception as exc:
+                logger.warning(
+                    "[WARN] Impossible de supprimer le verrou %s : %s",
+                    self._lock_path, exc,
+                )
+
+        # ── 6. Fermeture de la connexion ─────────────────────────────────
+        try:
+            self._backend.disconnect()
+        except Exception:
+            pass
+        self._backend = None
+
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -857,6 +1171,55 @@ class RemoteSync:
                     pass
 
         return result
+
+    def fetch_locked(
+        self,
+        remote_path: str,
+        local_path: Optional[str | Path] = None,
+        lock_suffix: Optional[str] = None,
+        poll_interval: Optional[float] = None,
+        timeout: Optional[float] = None,
+    ) -> "LockedFetch":
+        """
+        Context manager pour télécharger un fichier distant avec verrou.
+
+        Si un verrou ``<remote_path><lock_suffix>`` existe déjà sur le serveur,
+        attend qu'il disparaisse en sondant toutes les ``poll_interval`` secondes.
+        Lève :class:`LockTimeoutError` si ``timeout`` est dépassé (le verrou
+        existant n'est **pas** supprimé — il appartient à un autre processus).
+
+        Séquence garantie ::
+
+            with sync.fetch_locked("/data/export.csv", "/tmp/export.csv") as ctx:
+                # export.csv.lck existe sur le serveur (notre verrou)
+                # export.csv a été téléchargé localement
+                if ctx.result.success:
+                    process(ctx.result)
+            # À la sortie (succès OU exception) :
+            #   - export.csv supprimé du serveur  si téléchargement réussi
+            #   - export.csv.lck supprimé du serveur dans tous les cas
+
+        :param remote_path:    Chemin du fichier distant (absolu ou relatif à
+                               ``remote_base_dir``).
+        :param local_path:     Destination locale (voir :meth:`fetch_file`).
+        :param lock_suffix:    Suffixe du verrou. Défaut : ``config.lock_suffix``
+                               (``".lck"`` par défaut dans la config).
+        :param poll_interval:  Secondes entre deux sondages. Défaut :
+                               ``config.lock_poll_interval`` (2s).
+        :param timeout:        Secondes avant :class:`LockTimeoutError`. Défaut :
+                               ``config.lock_timeout`` (60s).
+        :raises LockTimeoutError: Si le verrou existant ne disparaît pas à temps.
+        :raises RuntimeError:     Si la création de notre propre verrou échoue.
+        :returns:              :class:`LockedFetch` (context manager).
+        """
+        return LockedFetch(
+            sync=self,
+            remote_path=remote_path,
+            local_path=local_path,
+            lock_suffix=lock_suffix if lock_suffix is not None else self.config.lock_suffix,
+            poll_interval=poll_interval if poll_interval is not None else self.config.lock_poll_interval,
+            timeout=timeout if timeout is not None else self.config.lock_timeout,
+        )
 
     # ------------------------------------------------------------------
     # Méthodes internes

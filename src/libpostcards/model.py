@@ -282,7 +282,8 @@ class Model:
         self.datadir = Path(datadir)
         self.cards_dir = self.datadir / "cards"
         self.db_path = self.datadir / "postcards.sqlite"
-        self.pois_json = self.datadir / "pois.json"
+        self.pois_json    = self.datadir / "pois.json"
+        self.updates_json = self.datadir / "updates.json"
         self._conn: sqlite3.Connection | None = None
         # Signature (mtime, inode) du fichier sqlite au moment de
         # l'ouverture de la connexion ; permet de détecter un
@@ -728,6 +729,76 @@ class Model:
     # Cartes uniques (exclusion des doublons)
     # ------------------------------------------------------------------
 
+    # Condition SQL qui sélectionne, pour chaque groupe de doublons,
+    # la carte la plus pertinente à afficher :
+    #
+    #  (A) La carte a des coordonnées GPS ET aucune autre carte du groupe
+    #      n'a de GPS avec un id numérique inférieur (départage quand
+    #      plusieurs membres ont des GPS).
+    #
+    #  (B) La carte n'a pas de coordonnées GPS ET aucun membre du groupe
+    #      n'en a non plus ET elle n'est pas référencée comme doublon par
+    #      une autre carte (comportement historique : carte "principale").
+    #
+    # "Groupe" = la carte elle-même + les cartes qui la référencent dans
+    # leur champ `doubles` + les cartes qu'elle référence dans le sien.
+    #
+    # Note : l'alias utilisé pour la carte courante doit être `cards`
+    # (pas de sous-alias) car cette condition est injectée dans un WHERE
+    # sur la table principale.
+    _UNIQUE_CARD_CONDITION = (
+        # Parenthèses extérieures OBLIGATOIRES : cette condition contient un OR
+        # interne (cas A OR cas B). Sans elles, un AND ajouté par
+        # " AND ".join(conditions) serait prioritaire sur le OR interne et
+        # rendrait les filtres search/collection inopérants pour le cas A
+        # (toutes les cartes avec GPS passeraient quel que soit le filtre).
+        "("
+        # (A) carte avec GPS, préférée dans son groupe
+        "  ("
+        "    cards.coord_lat IS NOT NULL"
+        "    AND NOT EXISTS ("
+        "      SELECT 1 FROM cards AS cg"
+        "      WHERE cg.coord_lat IS NOT NULL"
+        "        AND CAST(cg.id AS INTEGER) < CAST(cards.id AS INTEGER)"
+        "        AND ("
+        "          EXISTS ("
+        "            SELECT 1 FROM json_each(cards.doubles)"
+        "            WHERE CAST(json_each.value AS TEXT) = cg.id"
+        "          )"
+        "          OR EXISTS ("
+        "            SELECT 1 FROM json_each(cg.doubles)"
+        "            WHERE CAST(json_each.value AS TEXT) = cards.id"
+        "          )"
+        "        )"
+        "    )"
+        "  )"
+        "  OR"
+        # (B) carte sans GPS, aucun membre du groupe n'a de GPS,
+        #     et elle n'est pas référencée comme doublon par une autre
+        "  ("
+        "    cards.coord_lat IS NULL"
+        "    AND NOT EXISTS ("
+        "      SELECT 1 FROM cards AS cg"
+        "      WHERE cg.coord_lat IS NOT NULL"
+        "        AND ("
+        "          EXISTS ("
+        "            SELECT 1 FROM json_each(cards.doubles)"
+        "            WHERE CAST(json_each.value AS TEXT) = cg.id"
+        "          )"
+        "          OR EXISTS ("
+        "            SELECT 1 FROM json_each(cg.doubles)"
+        "            WHERE CAST(json_each.value AS TEXT) = cards.id"
+        "          )"
+        "        )"
+        "    )"
+        "    AND NOT EXISTS ("
+        "      SELECT 1 FROM cards AS c2, json_each(c2.doubles)"
+        "      WHERE CAST(json_each.value AS TEXT) = cards.id"
+        "    )"
+        "  )"
+        ")"
+    )
+
     def list_unique_cards(
         self,
         collection: str | None = None,
@@ -736,11 +807,10 @@ class Model:
         offset: int = 0,
     ) -> list[dict]:
         """
-        Liste les cartes en excluant celles référencées comme doublons
-        par une autre carte (champ ``doubles``).
-
-        Une carte est exclue si son id apparaît dans le champ
-        ``doubles`` d'une autre carte.
+        Liste les cartes uniques : pour chaque groupe de doublons, retourne
+        la carte dont les coordonnées GPS sont renseignées en priorité.
+        Si aucun membre du groupe n'a de GPS, retourne la carte "principale"
+        (non référencée comme doublon par une autre carte).
 
         Paramètres
         ----------
@@ -755,12 +825,7 @@ class Model:
         offset : int
             Décalage pour la pagination.
         """
-        conditions: list[str] = [
-            "NOT EXISTS ("
-            "  SELECT 1 FROM cards AS c2, json_each(c2.doubles)"
-            "  WHERE json_each.value = cards.id"
-            ")"
-        ]
+        conditions: list[str] = [self._UNIQUE_CARD_CONDITION]
         params: list[Any] = []
 
         if collection:
@@ -820,12 +885,7 @@ class Model:
         collection : str | None
             Filtre optionnel sur la collection.
         """
-        conditions: list[str] = [
-            "NOT EXISTS ("
-            "  SELECT 1 FROM cards AS c2, json_each(c2.doubles)"
-            "  WHERE json_each.value = cards.id"
-            ")"
-        ]
+        conditions: list[str] = [self._UNIQUE_CARD_CONDITION]
         params: list[Any] = []
 
         if collection:
@@ -866,13 +926,12 @@ class Model:
         collection: str | None = None,
         search: str | None = None,
     ) -> int:
-        """Retourne le nombre de cartes uniques (cf. list_unique_cards)."""
-        conditions: list[str] = [
-            "NOT EXISTS ("
-            "  SELECT 1 FROM cards AS c2, json_each(c2.doubles)"
-            "  WHERE json_each.value = cards.id"
-            ")"
-        ]
+        """Retourne le nombre de cartes uniques (cf. list_unique_cards).
+
+        Le comptage utilise la même logique de sélection : une seule carte
+        par groupe de doublons, en privilégiant celle avec des coordonnées GPS.
+        """
+        conditions: list[str] = [self._UNIQUE_CARD_CONDITION]
         params: list[Any] = []
 
         if collection:
@@ -934,7 +993,7 @@ class Model:
         cur = conn.execute(
             "SELECT id FROM cards WHERE EXISTS ("
             "  SELECT 1 FROM json_each(cards.doubles)"
-            "  WHERE json_each.value = ?"
+            "  WHERE CAST(json_each.value AS TEXT) = ?"
             ")",
             (card_id,),
         )
@@ -1143,3 +1202,91 @@ class Model:
         conn.execute("DELETE FROM auths WHERE email = ?", (email,))
         conn.commit()
         return existed
+
+    # ------------------------------------------------------------------
+    # Updates (updates.json)
+    # ------------------------------------------------------------------
+
+    def read_updates(self) -> list[dict]:
+        """Read updates.json and return the list of update entries.
+
+        Each entry has the shape:
+          {"email": str, "password": str, "card_id": str,
+           "lat": float, "lon": float}
+
+        Returns an empty list if the file is absent, unreadable or invalid.
+        Empty-password entries are silently skipped (authentication would
+        always fail for them).
+        """
+        try:
+            with self.updates_json.open(encoding="utf-8") as fh:
+                data = json.load(fh)
+            if not isinstance(data, list):
+                return []
+            return [e for e in data if isinstance(e, dict) and e.get("password")]
+        except (OSError, json.JSONDecodeError):
+            return []
+
+    def _write_updates(self, entries: list[dict]) -> None:
+        """Atomically write the updates list back to updates.json."""
+        tmp = self.updates_json.with_suffix(".json.tmp")
+        with tmp.open("w", encoding="utf-8") as fh:
+            json.dump(entries, fh, ensure_ascii=False, indent=2)
+        tmp.replace(self.updates_json)
+
+    def updates_for_card(self, card_id: str | int) -> list[dict]:
+        """Return all update entries for a given card id.
+
+        Only entries whose password matches a stored auth are returned;
+        entries with an unknown email or a wrong password are silently
+        ignored.
+        """
+        cid = str(card_id)
+        result = []
+        for entry in self.read_updates():
+            if str(entry.get("card_id")) != cid:
+                continue
+            if not self.check_auth(entry.get("email", ""), entry.get("password", "")):
+                continue
+            result.append(entry)
+        return result
+
+    def apply_update_gps(self, entry: dict) -> bool:
+        """Apply the GPS coordinates from an update entry to the card.
+
+        Updates both the JSON file and the SQLite database.
+        Returns True if the card was found and updated.
+        """
+        card_id = str(entry.get("card_id", ""))
+        lat = entry.get("lat")
+        lon = entry.get("lon")
+        if not card_id or lat is None or lon is None:
+            return False
+        card = self.load_json(card_id)
+        card["coord"] = [float(lat), float(lon)]
+        self.write_json(card)
+        logger.info("apply_update_gps : carte %s → [%s, %s]", card_id, lat, lon)
+        return True
+
+    def delete_update(self, email: str, card_id: str | int) -> bool:
+        """Remove all entries matching (email, card_id) from updates.json.
+
+        Returns True if at least one entry was removed.
+        """
+        cid = str(card_id)
+        entries = self.read_updates()
+        filtered = [e for e in entries
+                    if not (str(e.get("card_id")) == cid and e.get("email") == email)]
+        removed = len(entries) - len(filtered)
+        if removed:
+            if filtered:
+                self._write_updates(filtered)
+            else:
+                # Empty list: remove the file entirely to keep things clean
+                try:
+                    self.updates_json.unlink()
+                except OSError:
+                    pass
+            logger.info("delete_update : %d entrée(s) supprimée(s) pour carte %s / %s",
+                        removed, cid, email)
+        return bool(removed)

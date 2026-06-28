@@ -12,10 +12,6 @@
         <img id="pip-img" alt="{{ _("Verso de la carte") }}" />
     </div>
 
-    <div class="slideshow-meta">
-        <div class="slideshow-cdate" id="slideshow-cdate"></div>
-    </div>
-
     <header class="page-header">
         <h1 class="page-title">{{ page_title }}</h1>
 
@@ -47,10 +43,11 @@
         cardsUrl: "{{ url_for('slideshow.api_slideshow_cards') }}",
         cardDetailUrlBase: "{{ url_for('home.card_detail', card_id='__ID__', back=current_path) }}",
         imageBaseUrl: "{{ url_for('home.images', filename='') }}",
-        collection: {{ current_collection | tojson }},
-        addedOnLabel: "{{ _("Ajoutée le") }}"
+        collection: {{ current_collection | tojson }}
     };
 </script>
 <script src="{{ url_for('static', filename='js/slideshow.js') }}"></script>
+<script src="{{ url_for('static', filename='vendor/nosleep/NoSleep.min.js') }}"></script>
 <script src="{{ url_for('static', filename='js/wake-lock.js') }}"></script>
+<script src="{{ url_for('static', filename='js/fullscreen.js') }}"></script>
 {% endblock %}

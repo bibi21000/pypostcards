@@ -1,60 +1,59 @@
 /**
- * Gestion du Wake Lock (verrouillage d'écran) pour les diaporamas.
+ * Empêche la mise en veille de l'écran pendant les diaporamas.
  *
- * Empêche l'écran de se mettre en veille pendant la visualisation,
- * en utilisant l'API Screen Wake Lock (supportée sur Chrome Android
- * depuis la version 84, Safari iOS depuis la version 16.4).
+ * Utilise NoSleep.js qui combine automatiquement :
+ *  - l'API Screen Wake Lock (Chrome desktop, navigateurs modernes)
+ *  - une balise <video> en lecture silencieuse en boucle (Chrome Android,
+ *    Safari iOS) — technique utilisée par YouTube/Netflix, très fiable
  *
- * Sur les navigateurs qui ne supportent pas cette API (ou en cas
- * d'erreur de permission), le module échoue silencieusement sans
- * affecter le reste de l'application.
- *
- * Le wake lock est automatiquement relâché par le navigateur quand
- * l'onglet passe en arrière-plan (visibilitychange) ou quand l'écran
- * est verrouillé manuellement par l'utilisateur. Ce module le
- * réacquiert automatiquement quand la page redevient visible.
+ * Le wake lock est activé au premier clic/toucher sur la page (requis
+ * par les navigateurs mobiles : l'activation doit être déclenchée par
+ * un geste utilisateur). Il est automatiquement désactivé quand l'onglet
+ * passe en arrière-plan, et réactivé quand il redevient visible.
  */
 (function () {
     "use strict";
 
-    if (!("wakeLock" in navigator)) {
-        // API non supportée sur ce navigateur, abandon silencieux
+    if (typeof NoSleep === "undefined") {
         return;
     }
 
-    var wakeLock = null;
+    var noSleep = new NoSleep();
+    var enabled = false;
 
-    function acquire() {
-        navigator.wakeLock
-            .request("screen")
-            .then(function (lock) {
-                wakeLock = lock;
-            })
-            .catch(function () {
-                // Erreur silencieuse : permission refusée, appareil en
-                // mode économie d'énergie, etc.
-                wakeLock = null;
-            });
-    }
-
-    function release() {
-        if (wakeLock) {
-            wakeLock.release();
-            wakeLock = null;
+    function enable() {
+        if (enabled) {
+            return;
         }
+        noSleep.enable();
+        enabled = true;
     }
 
-    // Acquisition initiale dès le chargement de la page
-    acquire();
+    function disable() {
+        if (!enabled) {
+            return;
+        }
+        noSleep.disable();
+        enabled = false;
+    }
 
-    // Réacquisition automatique quand la page redevient visible
-    // (le navigateur relâche automatiquement le wake lock quand
-    // l'onglet passe en arrière-plan ou que l'écran se verrouille)
+    // Activation au premier geste utilisateur (obligatoire sur mobile)
+    document.addEventListener("click", function handler() {
+        enable();
+        document.removeEventListener("click", handler);
+    }, { once: true });
+
+    document.addEventListener("touchstart", function handler() {
+        enable();
+        document.removeEventListener("touchstart", handler);
+    }, { once: true });
+
+    // Pause/reprise selon la visibilité de l'onglet
     document.addEventListener("visibilitychange", function () {
         if (document.visibilityState === "visible") {
-            acquire();
+            enable();
         } else {
-            release();
+            disable();
         }
     });
 })();

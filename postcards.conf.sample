@@ -13,6 +13,9 @@ collections=Louhans,Seille,Autres
 collections_map=Louhans,Seille
 # Pour le publish sur un site distant
 max_workers = 5
+lock_suffix = .lck
+lock_poll_interval = 2.0
+lock_timeout = 60.0
 
 [tkmanager]
 

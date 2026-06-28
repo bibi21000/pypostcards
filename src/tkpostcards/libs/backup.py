@@ -22,7 +22,7 @@ class PostcardBackup:
                         os.path.join(source_dir, 'cards'),
                         arcname='cards'
                     )
-                    for f in ['travels.json']:
+                    for f in ['travels.json', 'pois.json']:
                         fname = os.path.join(source_dir, f)
                         if os.path.isfile(fname):
                             tar.add(

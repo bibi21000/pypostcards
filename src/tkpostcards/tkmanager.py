@@ -1487,6 +1487,7 @@ class App(tk.Tk):
         self._text_search_win: "TextSearchView | None" = None
         self._doubles_win: "DoublesSearchView | None" = None
         self._poi_win: "PoiManagerView | None" = None
+        self._auth_win: "AuthManagerView | None" = None
         # Shared PostcardSearcher instance — loaded once, reused by all
         # sub-windows (SearchView, DoublesSearchView) to avoid loading
         # the CLIP model multiple times and saturating GPU memory.
@@ -1495,6 +1496,8 @@ class App(tk.Tk):
         self._nav_collection: str | None = self._load_last_filter()
         self._nav_no_gps: bool = False
         self._nav_no_poi: bool = False
+        self._nav_with_updates: bool = False
+        self._nav_with_doubles: bool = False   # ← add this line
 
         self._scan_ids()
 
@@ -1583,6 +1586,10 @@ class App(tk.Tk):
                 cards = [c for c in cards if not c.get("coord")]
             if getattr(self, "_nav_no_poi", False):
                 cards = [c for c in cards if not c.get("poi")]
+            if getattr(self, "_nav_with_updates", False):
+                cards = [c for c in cards if str(c.get("id")) in update_ids]
+            if getattr(self, "_nav_with_doubles", False):   # ← add these 2 lines
+                cards = [c for c in cards if c.get("doubles")]
 
             ids = []
             for data in cards:
@@ -1705,7 +1712,7 @@ class App(tk.Tk):
         tk.Label(missing_filt_frm, text=_("nav_missing_filter_label"), bg=BG_CARD,
                  fg=FG_LABEL, font=FONT_LABEL).pack(side=tk.LEFT, padx=(0, 4))
         self._nav_missing_var = tk.StringVar(value=_("tsearch_all"))
-        missing_choices = [_("tsearch_all"), _("nav_no_gps"), _("nav_no_poi")]
+        missing_choices = [_("tsearch_all"), _("nav_no_gps"), _("nav_no_poi"), _("nav_with_updates"), _("nav_with_doubles")]
         self._nav_missing_menu = ttk.Combobox(missing_filt_frm,
                                               textvariable=self._nav_missing_var,
                                               values=missing_choices, width=14,
@@ -1861,6 +1868,17 @@ class App(tk.Tk):
                   bg=BG_FIELD, fg=FG_ACCENT2, font=FONT_LABEL,
                   relief=tk.FLAT, padx=8, cursor="hand2").pack(side=tk.RIGHT, padx=4)
 
+        sep(parent, FG_LINK)
+
+        # Updates panel (read-only)
+        upd_hdr = tk.Frame(parent, bg=BG_CARD)
+        upd_hdr.pack(fill=tk.X, padx=8, pady=(0, 2))
+        tk.Label(upd_hdr, text=_("field_updates"), bg=BG_CARD, fg=FG_LINK,
+                 font=("Georgia", 10, "bold")).pack(side=tk.LEFT, padx=10)
+
+        self._upd_frame = tk.Frame(parent, bg=BG_MAIN)
+        self._upd_frame.pack(fill=tk.X, padx=8, pady=(0, 4))
+
         tk.Frame(parent, bg=BG_MAIN, height=24).pack()
 
     # ── Card loading ──────────────────────────────────────────────────────────
@@ -1931,6 +1949,7 @@ class App(tk.Tk):
 
         self._mark_clean()
         self._save_last_id(cid)
+        self._refresh_updates(cid)
 
         # Notify the gallery
         if self._gallery and self._gallery.winfo_exists():
@@ -1972,7 +1991,96 @@ class App(tk.Tk):
             self._lbl_coord.config(text="")
             self._btn_osm.config(state=tk.DISABLED)
 
-    # ── Navigation ────────────────────────────────────────────────────────────
+    def _refresh_updates(self, cid: int):
+        """Rebuild the read-only updates panel for the current card."""
+        if not hasattr(self, "_upd_frame"):
+            return
+        # Destroy previous widgets
+        for w in self._upd_frame.winfo_children():
+            w.destroy()
+
+        try:
+            updates = self.model.updates_for_card(cid)
+        except Exception:
+            updates = []
+
+        if not updates:
+            tk.Label(self._upd_frame, text=_("updates_none"), bg=BG_MAIN,
+                     fg=FG_LABEL, font=FONT_LABEL).pack(anchor=tk.W, padx=10, pady=4)
+            return
+
+        for entry in updates:
+            self._build_update_row(entry)
+
+    def _build_update_row(self, entry: dict):
+        """Build one read-only row for an update entry."""
+        _cid = str(entry.get("card_id", ""))
+        email = entry.get("email", "")
+        lat = entry.get("lat")
+        lon = entry.get("lon")
+
+        row = tk.Frame(self._upd_frame, bg=BG_FIELD, relief=tk.FLAT)
+        row.pack(fill=tk.X, padx=4, pady=2)
+
+        # Info (read-only)
+        info_frm = tk.Frame(row, bg=BG_FIELD)
+        info_frm.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=8, pady=6)
+        tk.Label(info_frm, text=email, bg=BG_FIELD, fg=FG_ACCENT2,
+                 font=FONT_LABEL).pack(anchor=tk.W)
+        if lat is not None and lon is not None:
+            coord_txt = f"lat {lat:.6f}  /  lon {lon:.6f}"
+        else:
+            coord_txt = _("coord_none") if False else "—"
+        tk.Label(info_frm, text=coord_txt, bg=BG_FIELD, fg=FG_TEXT,
+                 font=FONT_INPUT).pack(anchor=tk.W)
+
+        # Buttons
+        btn_frm = tk.Frame(row, bg=BG_FIELD)
+        btn_frm.pack(side=tk.RIGHT, padx=8, pady=4)
+
+        if lat is not None and lon is not None:
+            tk.Button(btn_frm, text=_("btn_apply_gps"),
+                      command=lambda e=entry: self._apply_update_gps(e),
+                      bg=BTN_CLEAN, fg="#fff", font=FONT_LABEL,
+                      relief=tk.FLAT, padx=8, cursor="hand2").pack(
+                side=tk.LEFT, padx=2)
+            tk.Button(btn_frm, text=_("btn_open_osm"),
+                      command=lambda lt=lat, ln=lon: webbrowser.open(
+                          f"https://www.openstreetmap.org/?mlat={lt}&mlon={ln}#map=14/{lt}/{ln}"),
+                      bg=FG_LINK, fg="#000", font=FONT_LABEL,
+                      relief=tk.FLAT, padx=8, cursor="hand2").pack(
+                side=tk.LEFT, padx=2)
+
+        tk.Button(btn_frm, text=_("btn_delete_update"),
+                  command=lambda e=entry: self._delete_update(e),
+                  bg="#5a1a1a", fg=FG_TEXT, font=FONT_LABEL,
+                  relief=tk.FLAT, padx=8, cursor="hand2").pack(
+            side=tk.LEFT, padx=2)
+
+    def _apply_update_gps(self, entry: dict):
+        """Apply GPS coordinates from an update entry to the current card."""
+        try:
+            self.model.apply_update_gps(entry)
+        except Exception as e:
+            messagebox.showerror(_("error_title"), str(e), parent=self)
+            return
+        # Reload the current card to reflect the change
+        self._load_card(self._current_idx)
+
+    def _delete_update(self, entry: dict):
+        """Remove an update entry from updates.json and refresh the panel."""
+        email = entry.get("email", "")
+        cid = entry.get("card_id", "")
+        if not messagebox.askyesno(_("info_title"),
+                                   _("update_delete_confirm").format(email=email),
+                                   parent=self):
+            return
+        try:
+            self.model.delete_update(email, cid)
+        except Exception as e:
+            messagebox.showerror(_("error_title"), str(e), parent=self)
+            return
+        self._refresh_updates(self._ids[self._current_idx])
     # ── Collection filter for navigation ─────────────────────────────────────
     def _on_nav_filter_changed(self, _event=None):
         all_label = _("tsearch_all")
@@ -1984,6 +2092,10 @@ class App(tk.Tk):
                 self._nav_missing_var.set(_("nav_no_gps"))
             elif self._nav_no_poi:
                 self._nav_missing_var.set(_("nav_no_poi"))
+            elif self._nav_with_updates:
+                self._nav_missing_var.set(_("nav_with_updates"))
+            elif self._nav_with_doubles:                                    # ← add
+                self._nav_missing_var.set(_("nav_with_doubles"))            # ← add
             else:
                 self._nav_missing_var.set(all_label)
             return
@@ -1994,6 +2106,8 @@ class App(tk.Tk):
         self._nav_collection = None if (not choice or choice == all_label) else choice
         self._nav_no_gps = (missing_choice == _("nav_no_gps"))
         self._nav_no_poi = (missing_choice == _("nav_no_poi"))
+        self._nav_with_updates = (missing_choice == _("nav_with_updates"))
+        self._nav_with_doubles = (missing_choice == _("nav_with_doubles"))  # ← add
         self._scan_ids()
 
         if not self._ids:
@@ -2002,6 +2116,8 @@ class App(tk.Tk):
             self._nav_collection = None
             self._nav_no_gps = False
             self._nav_no_poi = False
+            self._nav_with_updates = False
+            self._nav_with_doubles = False   # ← add
             self._nav_filter_var.set(all_label)
             self._nav_missing_var.set(all_label)
             self._scan_ids()
@@ -2059,6 +2175,7 @@ class App(tk.Tk):
         m.add_command(label=_("nav_similar"), command=self._open_search)
         m.add_command(label=_("nav_doubles"), command=self._open_doubles_search)
         m.add_command(label=_("nav_pois"), command=self._open_poi_manager)
+        m.add_command(label=_("nav_auths"), command=self._open_auth_manager)
         m.add_command(label=_("nav_gallery"), command=self._open_gallery)
 
         # Close the menu as soon as it loses focus (click outside,
@@ -2170,6 +2287,14 @@ class App(tk.Tk):
             self._poi_win.focus_force()
             return
         self._poi_win = PoiManagerView(self, self._t)
+
+    # ── Auth manager ──────────────────────────────────────────────────────────
+    def _open_auth_manager(self):
+        if self._auth_win and self._auth_win.winfo_exists():
+            self._auth_win.lift()
+            self._auth_win.focus_force()
+            return
+        self._auth_win = AuthManagerView(self, self._t)
 
     # ── Viewer ────────────────────────────────────────────────────────────────
     def _open_viewer(self, side: str):
@@ -3264,6 +3389,232 @@ class PoiManagerView(tk.Toplevel):
                 return
 
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Auth manager
+# ─────────────────────────────────────────────────────────────────────────────
+class AuthManagerView(tk.Toplevel):
+    """Manage authentication entries (email + hashed password).
+
+    Passwords are never displayed — only the list of email addresses is
+    shown. Setting a new password replaces the previous hash via
+    Model.write_auth(), which uses PBKDF2-HMAC-SHA256 internally.
+    Model.check_auth() can be used to verify a plain-text password.
+    """
+
+    def __init__(self, parent: "App", t):
+        super().__init__(parent)
+        self._app = parent
+        self._t   = t
+        self.title(_("auth_title"))
+        self.configure(bg=BG_MAIN)
+        self.resizable(True, True)
+
+        self._emails: list[str] = []
+        self._selected: str | None = None
+
+        self._build_ui()
+        self._reload()
+        self.update_idletasks()
+        self.minsize(self.winfo_reqwidth(), self.winfo_reqheight())
+
+    # ── Construction ─────────────────────────────────────────────────────────
+    def _build_ui(self):
+        body = tk.Frame(self, bg=BG_MAIN)
+        body.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        # Left: email list
+        left = tk.Frame(body, bg=BG_CARD)
+        left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 8))
+
+        tk.Label(left, text=_("auth_list_label"), bg=BG_CARD, fg=FG_ACCENT,
+                 font=FONT_TITLE).pack(anchor=tk.W, padx=8, pady=(8, 4))
+
+        lb_frm = tk.Frame(left, bg=BG_CARD)
+        lb_frm.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
+        vsb = ttk.Scrollbar(lb_frm, orient=tk.VERTICAL)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        self._lb = tk.Listbox(lb_frm, bg=BG_INPUT, fg=FG_TEXT,
+                              selectbackground=FG_ACCENT, font=FONT_INPUT,
+                              relief=tk.FLAT, activestyle="none",
+                              yscrollcommand=vsb.set)
+        self._lb.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.config(command=self._lb.yview)
+        self._lb.bind("<<ListboxSelect>>", self._on_select)
+
+        tk.Button(left, text=_("auth_new"), command=self._new,
+                  bg=BG_FIELD, fg=FG_ACCENT2, font=FONT_LABEL,
+                  relief=tk.FLAT, padx=8, cursor="hand2").pack(
+            fill=tk.X, padx=8, pady=(0, 8))
+
+        # Right: detail / password form
+        right = tk.Frame(body, bg=BG_CARD, width=320)
+        right.pack(side=tk.LEFT, fill=tk.Y)
+        right.pack_propagate(False)
+
+        tk.Label(right, text=_("auth_detail_label"), bg=BG_CARD, fg=FG_ACCENT,
+                 font=FONT_TITLE).pack(anchor=tk.W, padx=10, pady=(10, 6))
+
+        # Email
+        ef = tk.Frame(right, bg=BG_CARD)
+        ef.pack(fill=tk.X, padx=10, pady=4)
+        tk.Label(ef, text=_("auth_email"), bg=BG_CARD, fg=FG_LABEL,
+                 font=FONT_LABEL, width=12, anchor=tk.W).pack(side=tk.LEFT)
+        self._email_var = tk.StringVar()
+        self._email_entry = tk.Entry(ef, textvariable=self._email_var,
+                                     bg=BG_INPUT, fg=FG_TEXT, insertbackground=FG_TEXT,
+                                     font=FONT_INPUT, relief=tk.FLAT)
+        self._email_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        context_menu(self._email_entry)
+
+        # Password
+        pf = tk.Frame(right, bg=BG_CARD)
+        pf.pack(fill=tk.X, padx=10, pady=4)
+        tk.Label(pf, text=_("auth_password"), bg=BG_CARD, fg=FG_LABEL,
+                 font=FONT_LABEL, width=12, anchor=tk.W).pack(side=tk.LEFT)
+        self._pwd_var = tk.StringVar()
+        self._pwd_entry = tk.Entry(pf, textvariable=self._pwd_var, show="•",
+                                   bg=BG_INPUT, fg=FG_TEXT, insertbackground=FG_TEXT,
+                                   font=FONT_INPUT, relief=tk.FLAT)
+        self._pwd_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        context_menu(self._pwd_entry)
+
+        # Password confirm
+        pcf = tk.Frame(right, bg=BG_CARD)
+        pcf.pack(fill=tk.X, padx=10, pady=4)
+        tk.Label(pcf, text=_("auth_password_confirm"), bg=BG_CARD, fg=FG_LABEL,
+                 font=FONT_LABEL, width=12, anchor=tk.W).pack(side=tk.LEFT)
+        self._pwd2_var = tk.StringVar()
+        self._pwd2_entry = tk.Entry(pcf, textvariable=self._pwd2_var, show="•",
+                                    bg=BG_INPUT, fg=FG_TEXT, insertbackground=FG_TEXT,
+                                    font=FONT_INPUT, relief=tk.FLAT)
+        self._pwd2_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        context_menu(self._pwd2_entry)
+
+        tk.Label(right, text=_("auth_password_hint"), bg=BG_CARD, fg=FG_LABEL,
+                 font=("Courier", 8), wraplength=280, justify=tk.LEFT).pack(
+            padx=10, anchor=tk.W)
+
+        # Show/hide toggle
+        self._show_pwd = tk.BooleanVar(value=False)
+        tk.Checkbutton(right, text=_("auth_show_password"),
+                       variable=self._show_pwd, command=self._toggle_show,
+                       bg=BG_CARD, fg=FG_LABEL, selectcolor=BG_FIELD,
+                       activebackground=BG_CARD, font=FONT_LABEL,
+                       relief=tk.FLAT).pack(padx=10, anchor=tk.W, pady=(4, 0))
+
+        # Actions
+        actions = tk.Frame(right, bg=BG_CARD)
+        actions.pack(fill=tk.X, padx=10, pady=10, side=tk.BOTTOM)
+        tk.Button(actions, text=_("btn_save_close"), command=self._save,
+                  bg=FG_ACCENT, fg="#fff", font=FONT_LABEL,
+                  relief=tk.FLAT, padx=10, cursor="hand2").pack(
+            side=tk.LEFT, padx=(0, 6))
+        tk.Button(actions, text=_("auth_delete"), command=self._delete,
+                  bg="#5a1a1a", fg=FG_TEXT, font=FONT_LABEL,
+                  relief=tk.FLAT, padx=10, cursor="hand2").pack(side=tk.LEFT)
+
+        self._status = tk.StringVar(value="")
+        tk.Label(self, textvariable=self._status, bg=BG_CARD, fg=FG_LABEL,
+                 font=FONT_SMALL, anchor=tk.W, padx=8).pack(fill=tk.X)
+
+    # ── Data ──────────────────────────────────────────────────────────────────
+    def _reload(self):
+        try:
+            entries = self._app.model.list_auths()
+            self._emails = [e["email"] for e in entries]
+        except Exception as e:
+            self._status.set(str(e))
+            self._emails = []
+
+        self._lb.delete(0, tk.END)
+        for email in self._emails:
+            self._lb.insert(tk.END, email)
+
+        self._status.set(_("auth_count").format(n=len(self._emails)))
+
+    def _on_select(self, _event=None):
+        sel = self._lb.curselection()
+        if not sel:
+            return
+        email = self._emails[sel[0]]
+        self._selected = email
+        self._email_var.set(email)
+        self._email_entry.config(state=tk.DISABLED)
+        self._pwd_var.set("")
+        self._pwd2_var.set("")
+        self._status.set(_("auth_selected").format(email=email))
+
+    def _new(self):
+        self._selected = None
+        self._lb.selection_clear(0, tk.END)
+        self._email_var.set("")
+        self._email_entry.config(state=tk.NORMAL)
+        self._pwd_var.set("")
+        self._pwd2_var.set("")
+        self._email_entry.focus_set()
+        self._status.set("")
+
+    def _toggle_show(self):
+        char = "" if self._show_pwd.get() else "•"
+        self._pwd_entry.config(show=char)
+        self._pwd2_entry.config(show=char)
+
+    # ── Save / Delete ─────────────────────────────────────────────────────────
+    def _save(self):
+        email = self._email_var.get().strip()
+        if not email:
+            messagebox.showwarning(_("info_title"), _("auth_email_required"), parent=self)
+            return
+
+        pwd  = self._pwd_var.get()
+        pwd2 = self._pwd2_var.get()
+
+        if not pwd:
+            messagebox.showwarning(_("info_title"), _("auth_password_required"), parent=self)
+            return
+        if pwd != pwd2:
+            messagebox.showerror(_("error_title"), _("auth_password_mismatch"), parent=self)
+            return
+
+        try:
+            self._app.model.write_auth(email, pwd)
+        except Exception as e:
+            messagebox.showerror(_("error_title"), str(e), parent=self)
+            return
+
+        self._pwd_var.set("")
+        self._pwd2_var.set("")
+        self._selected = email
+        self._email_entry.config(state=tk.DISABLED)
+        self._reload()
+        self._select_in_list(email)
+        self._status.set(_("auth_saved").format(email=email))
+
+    def _delete(self):
+        if not self._selected:
+            return
+        if not messagebox.askyesno(_("info_title"),
+                                   _("auth_delete_confirm").format(email=self._selected),
+                                   parent=self):
+            return
+        try:
+            self._app.model.delete_auth(self._selected)
+        except Exception as e:
+            messagebox.showerror(_("error_title"), str(e), parent=self)
+            return
+        self._new()
+        self._reload()
+
+    def _select_in_list(self, email: str):
+        for i, e in enumerate(self._emails):
+            if e == email:
+                self._lb.selection_clear(0, tk.END)
+                self._lb.selection_set(i)
+                self._lb.see(i)
+                return
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  Full-text search over the database
 # ─────────────────────────────────────────────────────────────────────────────
@@ -3449,4 +3800,3 @@ def run():
     """Standalone entry point (tkmanager script): runs `cli main`."""
     sys.argv.insert(1, "main")
     cli()
-
